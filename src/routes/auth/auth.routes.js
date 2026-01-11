@@ -1,26 +1,24 @@
 import express from "express";
 import { validate } from "../../middleware/validate.js";
-import authController from "../../controllers/auth/auth.controller.js";
+import {
+  register,
+  login,
+  profile,
+} from "../../controllers/auth/auth.controller.js";
 import {
   registerSchema,
   loginSchema,
 } from "../../utils/validations/auth.schema.js";
-import { authenticate, authorize } from "../../middlewares/auth.middleware.js";
+import {
+  authenticate,
+  authorize,
+} from "../../middleware/authenticate.middleware.js";
 
 const router = express.Router();
 
-// Public routes
-router.post(
-  "/register",
-  validate({ body: registerSchema }),
-  authController.register
-);
-router.post("/login", validate({ body: loginSchema }), authController.login);
-
-// Protected route: user profile
-router.get("/profile", authenticate, authController.profile);
-
-// Admin-only route example
+router.post("/register", validate({ body: registerSchema }), register);
+router.post("/login", validate({ body: loginSchema }), login);
+router.get("/profile", authenticate, profile);
 router.get(
   "/admin/dashboard",
   authenticate,

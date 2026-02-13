@@ -24,7 +24,7 @@ router.get(
   authenticate,
   authorize(["ADMIN"]),
   (req, res) => {
-    res.send("Welcome Admin!");
+    res.send("Welcome Admin");
   }
 );
 

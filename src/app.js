@@ -17,7 +17,7 @@ app.use("/api", routes);
 
 // Health check route
 app.get("/", (req, res) => {
-  res.send("PCOS Backend API is running!");
+  res.send("PCOS Backend API is running");
 });
 
-export default app; // ✅ default export required for server.js
+export default app; // default export required for server.js

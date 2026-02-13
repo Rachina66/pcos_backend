@@ -1,23 +1,62 @@
 generator client {
   provider = "prisma-client-js"
-
 }
 
 datasource db {
   provider = "postgresql"
+  
 }
 
 model User {
-  id        String   @id @default(uuid())
-  name      String
-  email     String   @unique
-  password  String
-  role      Role     @default(USER)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String       @id @default(uuid())
+  name        String
+  email       String       @unique
+  password    String
+  role        Role         @default(USER)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  predictions Prediction[]                   
 }
 
 enum Role {
   USER
   ADMIN
+}
+
+model Prediction {
+  id               String   @id @default(uuid())
+  userId           String                          // String to match User.id (UUID)
+  user             User     @relation(fields: [userId], references: [id])
+
+  // Patient inputs 
+
+
+
+  age              Float
+  weight           Float
+  height           Float
+  bmi              Float
+  bloodGroup       String                          // Stored but NOT used in ML model
+  cycleLengthDays  Float
+  periodLengthDays Float
+  regularOvulation Boolean
+  fshLevel         Float
+  lhLevel          Float
+  androgenLevel    Float
+  cystCount        Float
+  hirsutism        Boolean
+  fastingGlucose   Float
+  activityLevel    Int
+  stressLevel      Int
+  pregnant         Boolean
+
+  // ML Results
+  prediction       Int                             // 0 = Low Risk, 1 = High Risk
+  probability      Float                           // 0.0 to 1.0
+  riskLevel        String                          // "Low Risk" or "High Risk"
+  confidence       Float                           // 0.0 to 100.0
+
+  createdAt        DateTime @default(now())
+
+  @@index([userId])
 }

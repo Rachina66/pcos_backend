@@ -1,13 +1,13 @@
 import express from "express";
-import prisma from "../config/prismaclient.js"; 
+import prisma from "../config/prismaclient.js";
 import { spawn } from "child_process";
 import path from "path";
 
 const router = express.Router();
 
-// ----------------------
+
 // Helper: Input Validation
-// ----------------------
+
 function validateInput(data) {
   const errors = [];
 
@@ -23,10 +23,18 @@ function validateInput(data) {
   if (!data.bmi || data.bmi <= 0 || data.bmi > 70)
     errors.push("BMI must be between 1 and 70");
 
-  if (!data.cycleLengthDays || data.cycleLengthDays < 15 || data.cycleLengthDays > 90)
+  if (
+    !data.cycleLengthDays ||
+    data.cycleLengthDays < 15 ||
+    data.cycleLengthDays > 90
+  )
     errors.push("Cycle length must be between 15 and 90 days");
 
-  if (!data.periodLengthDays || data.periodLengthDays < 1 || data.periodLengthDays > 15)
+  if (
+    !data.periodLengthDays ||
+    data.periodLengthDays < 1 ||
+    data.periodLengthDays > 15
+  )
     errors.push("Period length must be between 1 and 15 days");
 
   if (!data.fshLevel || data.fshLevel < 0 || data.fshLevel > 200)
@@ -41,7 +49,11 @@ function validateInput(data) {
   if (data.cystCount === undefined || data.cystCount < 0 || data.cystCount > 50)
     errors.push("Cyst count must be between 0 and 50");
 
-  if (!data.fastingGlucose || data.fastingGlucose < 50 || data.fastingGlucose > 400)
+  if (
+    !data.fastingGlucose ||
+    data.fastingGlucose < 50 ||
+    data.fastingGlucose > 400
+  )
     errors.push("Fasting glucose must be between 50 and 400");
 
   if (!data.activityLevel || data.activityLevel < 1 || data.activityLevel > 5)
@@ -53,29 +65,25 @@ function validateInput(data) {
   return errors;
 }
 
-// ----------------------
+
 // Run Python Prediction
-// ----------------------
+
 function runPythonPrediction(inputData, timeout = 10000) {
   return new Promise((resolve, reject) => {
-    // predict.py is in the root of the project (FYP/)
     const scriptPath = path.join(process.cwd(), "predict.py");
-    const python = spawn("python3", [scriptPath]);
+    const python = spawn("python", [scriptPath]);
 
     let dataString = "";
     let errorString = "";
 
-    // Timeout if Python takes too long
     const timer = setTimeout(() => {
       python.kill();
       reject(new Error("Python script timed out"));
     }, timeout);
 
-    // Send input data to Python
     python.stdin.write(JSON.stringify(inputData));
     python.stdin.end();
 
-    // Collect output from Python
     python.stdout.on("data", (data) => {
       dataString += data.toString();
     });
@@ -100,67 +108,60 @@ function runPythonPrediction(inputData, timeout = 10000) {
   });
 }
 
-// ----------------------
+
 // POST /api/predict
-// ----------------------
+
 router.post("/predict", async (req, res) => {
   try {
     const { userId, data } = req.body;
 
-    // Check required fields exist
     if (!userId || !data) {
       return res.status(400).json({
         success: false,
-        error: "userId and data are required"
+        error: "userId and data are required",
       });
     }
 
-    // Validate input values
     const errors = validateInput(data);
     if (errors.length > 0) {
       return res.status(400).json({
         success: false,
-        error: errors.join(", ")
+        error: errors.join(", "),
       });
     }
 
-    // Prepare Python input (16 numeric features - NO Blood Group)
     const pythonInput = {
-      "Age_yrs": Number(data.age),
-      "Weight_kg": Number(data.weight),
-      "Height_cm": Number(data.height),
-      "BMI": Number(data.bmi),
-      // Blood_Group_Rh: REMOVED (not used in model)
-      "Cycle_Length_Days": Number(data.cycleLengthDays),
-      "Period_Length_Days": Number(data.periodLengthDays),
+      Age_yrs: Number(data.age),
+      Weight_kg: Number(data.weight),
+      Height_cm: Number(data.height),
+      BMI: Number(data.bmi),
+      Cycle_Length_Days: Number(data.cycleLengthDays),
+      Period_Length_Days: Number(data.periodLengthDays),
       "Regular_Ovulation_Y/N": data.regularOvulation ? 1 : 0,
       "FSH_mIU/mL": Number(data.fshLevel),
       "LH_mIU/mL": Number(data.lhLevel),
-      "Androgen_Level": Number(data.androgenLevel),
-      "Cyst_Count": Number(data.cystCount),
+      Androgen_Level: Number(data.androgenLevel),
+      Cyst_Count: Number(data.cystCount),
       "Hirsutism_Y/N": data.hirsutism ? 1 : 0,
       "Fasting_Glucose_mg/dL": Number(data.fastingGlucose),
-      "Activity_Level_1_5": Number(data.activityLevel),
-      "Stress_Level_1_5": Number(data.stressLevel),
-      "Pregnant_Y/N": data.pregnant ? 1 : 0
+      Activity_Level_1_5: Number(data.activityLevel),
+      Stress_Level_1_5: Number(data.stressLevel),
+      "Pregnant_Y/N": data.pregnant ? 1 : 0,
     };
 
-    // Call Python prediction script
     const result = await runPythonPrediction(pythonInput, 10000);
 
     if (!result.success) {
       return res.status(500).json(result);
     }
-
-    // Save to database (Blood Group stored for records even though not used in model)
     const prediction = await prisma.prediction.create({
       data: {
-        userId: userId,
+        userId: String(userId), 
         age: Number(data.age),
         weight: Number(data.weight),
         height: Number(data.height),
         bmi: Number(data.bmi),
-        bloodGroup: data.bloodGroup,         // Stored for records only
+        bloodGroup: data.bloodGroup,
         cycleLengthDays: Number(data.cycleLengthDays),
         periodLengthDays: Number(data.periodLengthDays),
         regularOvulation: Boolean(data.regularOvulation),
@@ -176,8 +177,8 @@ router.post("/predict", async (req, res) => {
         prediction: result.prediction,
         probability: result.probability,
         riskLevel: result.risk_level,
-        confidence: result.confidence
-      }
+        confidence: result.confidence,
+      },
     });
 
     res.json({
@@ -187,52 +188,50 @@ router.post("/predict", async (req, res) => {
         prediction: result.prediction,
         riskLevel: result.risk_level,
         confidence: result.confidence,
-        probability: result.probability
-      }
+        probability: result.probability,
+      },
     });
-
   } catch (error) {
     console.error("Prediction error:", error);
     res.status(500).json({
       success: false,
-      error: "Prediction failed"
+      error: "Prediction failed",
     });
   }
 });
 
-// ----------------------
+
 // GET /api/predictions/:userId
-// ----------------------
+
 router.get("/predictions/:userId", async (req, res) => {
   try {
-    const userId = parseInt(req.params.userId);
+    const userId = req.params.userId;
 
-    if (isNaN(userId)) {
+    if (!userId) {
       return res.status(400).json({
+        // ✅ FIXED - added this line back
         success: false,
-        error: "Invalid userId"
+        error: "Invalid userId",
       });
     }
 
     const predictions = await prisma.prediction.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
-      take: 10
+      take: 10,
     });
 
     res.json({
       success: true,
-      predictions
+      predictions,
     });
-
   } catch (error) {
     console.error("Error fetching predictions:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch predictions"
+      error: "Failed to fetch predictions",
     });
   }
 });
 
 export default router;
-

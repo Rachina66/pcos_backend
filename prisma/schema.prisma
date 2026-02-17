@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  
+   
 }
 
 model User {
@@ -15,7 +15,8 @@ model User {
   role        Role         @default(USER)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
-  predictions Prediction[]                   
+  predictions Prediction[]  
+  appointments Appointment[]                 
 }
 
 enum Role {
@@ -29,9 +30,6 @@ model Prediction {
   user             User     @relation(fields: [userId], references: [id])
 
   // Patient inputs 
-
-
-
   age              Float
   weight           Float
   height           Float
@@ -59,4 +57,75 @@ model Prediction {
   createdAt        DateTime @default(now())
 
   @@index([userId])
+}
+
+//Doctors
+
+model Doctor {
+  id             String        @id @default(uuid())
+  name           String
+  specialization String
+  qualification  String
+  experience     Int
+  hospital       String
+  location       String
+  phone          String
+  email          String        @unique
+  bio            String?
+  imageUrl       String?
+  availableDays  String[]
+  timeSlots      String[]
+  consultFee     Float
+  isActive       Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  appointments   Appointment[]
+}
+
+//Appointment
+model Appointment {
+  id         String            @id @default(uuid())
+  userId     String
+  doctorId   String
+  user       User              @relation(fields: [userId], references: [id])
+  doctor     Doctor            @relation(fields: [doctorId], references: [id])
+  date       DateTime
+  timeSlot   String
+  reason     String?
+  reportFile String?           // file path for uploaded report
+  status     AppointmentStatus @default(PENDING)
+  notes      String?
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@index([userId])
+  @@index([doctorId])
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+model EducationalContent {
+  id          String          @id @default(uuid())
+  title       String
+  content     String
+  category    ContentCategory
+  imageUrl    String?
+  tags        String[]
+  isPublished Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+enum ContentCategory {
+  PCOS_BASICS
+  NUTRITION
+  EXERCISE
+  MENTAL_HEALTH
+  TREATMENT
+  LIFESTYLE
 }

@@ -142,3 +142,45 @@ export const deleteDoctor = async (req, res) => {
     return errorResponse(res, "Failed to delete doctor", 500, error.message);
   }
 };
+
+export const getAvailableSlots = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { date } = req.query;
+
+    if (!date) {
+      return errorResponse(res, "Date parameter is required", 400);
+    }
+
+    const doctor = await doctorService.getDoctorById(id);
+    if (!doctor) return notFoundResponse(res, "Doctor not found");
+
+    const bookedAppointments = await prisma.appointment.findMany({
+      where: {
+        doctorId: id,
+        date: new Date(date),
+        status: { in: ["PENDING", "CONFIRMED"] },
+      },
+      select: { timeSlot: true },
+    });
+
+    const bookedSlots = bookedAppointments.map((apt) => apt.timeSlot);
+    const availableSlots = doctor.timeSlots.filter(
+      (slot) => !bookedSlots.includes(slot),
+    );
+
+    return successResponse(
+      res,
+      {
+        date,
+        doctorName: doctor.name,
+        allSlots: doctor.timeSlots,
+        bookedSlots,
+        availableSlots,
+      },
+      "Available slots fetched",
+    );
+  } catch (error) {
+    return errorResponse(res, "Failed to fetch slots", 500, error.message);
+  }
+};

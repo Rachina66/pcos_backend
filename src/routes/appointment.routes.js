@@ -24,12 +24,7 @@ router.get(
   authorize(["ADMIN"]),
   appointmentController.getAllAppointments,
 );
-router.put(
-  "/:id/status",
-  authenticate,
-  authorize(["ADMIN"]),
-  appointmentController.updateAppointmentStatus,
-);
+
 router.get(
   "/:id/report",
   authenticate,

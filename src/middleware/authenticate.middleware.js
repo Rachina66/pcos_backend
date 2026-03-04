@@ -10,22 +10,31 @@ export const authenticate = async (req, res, next) => {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return errorResponse(res, { message: "Unauthorized: No token provided", status: 401 });
+      return errorResponse(res, {
+        message: "Unauthorized: No token provided",
+        status: 401,
+      });
     }
 
     const token = authHeader.split(" ")[1];
-    const decoded = jwt.verify(token, JWT_SECRET); 
+    const decoded = jwt.verify(token, JWT_SECRET);
 
     // Attach user to request
-    const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
+    const user = await prisma.user.findUnique({ where: { id: decoded.id } });
     if (!user) {
-      return errorResponse(res, { message: "Unauthorized: User not found", status: 401 });
+      return errorResponse(res, {
+        message: "Unauthorized: User not found",
+        status: 401,
+      });
     }
 
     req.user = user;
     next();
   } catch (error) {
-    return errorResponse(res, { message: "Unauthorized: Invalid token", status: 401 });
+    return errorResponse(res, {
+      message: "Unauthorized: Invalid token",
+      status: 401,
+    });
   }
 };
 
@@ -33,7 +42,10 @@ export const authenticate = async (req, res, next) => {
 export const authorize = (roles = []) => {
   return (req, res, next) => {
     if (!roles.includes(req.user.role)) {
-      return errorResponse(res, { message: "Forbidden: Access denied", status: 403 });
+      return errorResponse(res, {
+        message: "Forbidden: Access denied",
+        status: 403,
+      });
     }
     next();
   };

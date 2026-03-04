@@ -64,3 +64,40 @@ export const login = async ({ email, password }) => {
 export const getUserById = async (id) => {
   return prisma.user.findUnique({ where: { id } });
 };
+
+// Register doctor account
+export const registerDoctor = async (doctorData) => {
+  const { name, email, password } = doctorData;
+
+  const existingUser = await prisma.user.findUnique({ where: { email } });
+  if (existingUser) {
+    throw new Error("Email already registered");
+  }
+
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  const user = await prisma.user.create({
+    data: {
+      name,
+      email,
+      password: hashedPassword,
+      role: "DOCTOR",
+    },
+  });
+
+  const token = generateToken({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+  });
+
+  return {
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    },
+    token,
+  };
+};

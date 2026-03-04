@@ -48,3 +48,13 @@ export const profile = async (req, res) => {
     return errorResponse(res, "Failed to fetch profile", 500, error.message);
   }
 };
+
+// Register doctor
+export const registerDoctor = async (req, res) => {
+  try {
+    const result = await authService.registerDoctor(req.body);
+    return successResponse(res, result, "Doctor registered successfully", 201);
+  } catch (error) {
+    return errorResponse(res, error.message, 400);
+  }
+};

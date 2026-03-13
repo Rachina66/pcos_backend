@@ -4,19 +4,18 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-   
 }
 
 model User {
-  id          String       @id @default(uuid())
-  name        String
-  email       String       @unique
-  password    String
-  role        Role         @default(USER)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  predictions Prediction[]  
-  appointments Appointment[]                 
+  id           String        @id @default(uuid())
+  name         String
+  email        String        @unique
+  password     String
+  role         Role          @default(USER)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  predictions  Prediction[]
+  appointments Appointment[]
 }
 
 enum Role {
@@ -27,15 +26,15 @@ enum Role {
 
 model Prediction {
   id               String   @id @default(uuid())
-  userId           String                          // String to match User.id (UUID)
+  userId           String
   user             User     @relation(fields: [userId], references: [id])
 
-  // Patient inputs 
+  // Patient inputs
   age              Float
   weight           Float
   height           Float
   bmi              Float
-  bloodGroup       String                          // Stored but NOT used in ML model
+  bloodGroup       String
   cycleLengthDays  Float
   periodLengthDays Float
   regularOvulation Boolean
@@ -50,17 +49,15 @@ model Prediction {
   pregnant         Boolean
 
   // ML Results
-  prediction       Int                             // 0 = Low Risk, 1 = High Risk
-  probability      Float                           // 0.0 to 1.0
-  riskLevel        String                          // "Low Risk" or "High Risk"
-  confidence       Float                           // 0.0 to 100.0
+  prediction  Int
+  probability Float
+  riskLevel   String
+  confidence  Float
 
-  createdAt        DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([userId])
 }
-
-//Doctors
 
 model Doctor {
   id             String        @id @default(uuid())
@@ -83,7 +80,6 @@ model Doctor {
   appointments   Appointment[]
 }
 
-//Appointment
 model Appointment {
   id         String            @id @default(uuid())
   userId     String
@@ -93,9 +89,15 @@ model Appointment {
   date       DateTime
   timeSlot   String
   reason     String?
-  reportFile String?           // file path for uploaded report
+  reportFile String?
   status     AppointmentStatus @default(PENDING)
   notes      String?
+  
+  // ← ADD THESE 3 FIELDS
+  consultationNotes String?
+  prescription      String?
+  diagnosis         String?
+  
   createdAt  DateTime          @default(now())
   updatedAt  DateTime          @updatedAt
 
@@ -110,5 +112,23 @@ enum AppointmentStatus {
   COMPLETED
 }
 
+model EducationalContent {
+  id          String          @id @default(uuid())
+  title       String
+  content     String
+  category    ContentCategory
+  imageUrl    String?
+  tags        String[]
+  isPublished Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
 
-
+enum ContentCategory {
+  PCOS_BASICS
+  NUTRITION
+  EXERCISE
+  MENTAL_HEALTH
+  TREATMENT
+  LIFESTYLE
+}

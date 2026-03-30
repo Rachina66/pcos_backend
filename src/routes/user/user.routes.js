@@ -15,5 +15,5 @@ router.get("/predictions", userController.getMyPredictions);
 // ═══ APPOINTMENTS ═══
 router.post("/appointments", uploadReport, userController.bookAppointment);
 router.get("/appointments", userController.getMyAppointments);
-
+router.delete("/appointments/:id", userController.cancelAppointment);
 export default router;

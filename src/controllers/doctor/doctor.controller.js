@@ -5,16 +5,26 @@ import {
   notFoundResponse,
 } from "../../utils/apiResponse.utils.js";
 import path from "path";
+import {
+  sendAppointmentConfirmed,
+  sendAppointmentRejected,
+  sendAppointmentCompleted,
+} from "../../utils/email.utils.js";
+// ═══ HELPER — get doctor profile or return error ═══
+const getDoctorProfileOrError = async (res, email) => {
+  const doctorProfile = await doctorService.getDoctorProfileByEmail(email);
+  if (!doctorProfile) {
+    errorResponse(res, "Doctor profile not found", 404);
+    return null;
+  }
+  return doctorProfile;
+};
 
 // ═══ PROFILE MANAGEMENT ═══
 export const getMyProfile = async (req, res) => {
   try {
     const profile = await doctorService.getDoctorProfileByEmail(req.user.email);
-
-    if (!profile) {
-      return errorResponse(res, "Doctor profile not found", 404);
-    }
-
+    if (!profile) return errorResponse(res, "Doctor profile not found", 404);
     return successResponse(res, profile, "Profile fetched successfully");
   } catch (error) {
     return errorResponse(res, "Failed to fetch profile", 500, error.message);
@@ -25,7 +35,6 @@ export const updateMyProfile = async (req, res) => {
   try {
     const updateData = { ...req.body };
 
-    // Parse arrays if provided
     if (updateData.availableDays) {
       updateData.availableDays = Array.isArray(updateData.availableDays)
         ? updateData.availableDays
@@ -38,20 +47,17 @@ export const updateMyProfile = async (req, res) => {
         : updateData.timeSlots.split(",").map((t) => t.trim());
     }
 
-    // Parse numbers if provided
     if (updateData.experience)
       updateData.experience = Number(updateData.experience);
     if (updateData.consultFee)
       updateData.consultFee = Number(updateData.consultFee);
 
-    // Don't allow email change
     delete updateData.email;
 
     const updated = await doctorService.updateDoctorProfile(
       req.user.email,
       updateData,
     );
-
     return successResponse(res, updated, "Profile updated successfully");
   } catch (error) {
     return errorResponse(res, "Failed to update profile", 500, error.message);
@@ -88,7 +94,6 @@ export const updateMyAvailability = async (req, res) => {
       req.user.email,
       updateData,
     );
-
     return successResponse(res, updated, "Availability updated successfully");
   } catch (error) {
     return errorResponse(
@@ -103,13 +108,8 @@ export const updateMyAvailability = async (req, res) => {
 // ═══ DASHBOARD STATS ═══
 export const getDashboardStats = async (req, res) => {
   try {
-    const doctorProfile = await doctorService.getDoctorProfileByEmail(
-      req.user.email,
-    );
-
-    if (!doctorProfile) {
-      return errorResponse(res, "Doctor profile not found", 404);
-    }
+    const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
+    if (!doctorProfile) return;
 
     const stats = await doctorService.getDoctorStats(doctorProfile.id);
     return successResponse(res, stats, "Stats fetched successfully");
@@ -121,17 +121,11 @@ export const getDashboardStats = async (req, res) => {
 // ═══ APPOINTMENT MANAGEMENT ═══
 export const getMyAppointments = async (req, res) => {
   try {
-    const doctorProfile = await doctorService.getDoctorProfileByEmail(
-      req.user.email,
-    );
-
-    if (!doctorProfile) {
-      return errorResponse(res, "Doctor profile not found", 404);
-    }
+    const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
+    if (!doctorProfile) return;
 
     const { status, date } = req.query;
     const filters = {};
-
     if (status) filters.status = status;
     if (date) filters.date = date;
 
@@ -139,7 +133,6 @@ export const getMyAppointments = async (req, res) => {
       doctorProfile.id,
       filters,
     );
-
     return successResponse(
       res,
       appointments,
@@ -157,18 +150,12 @@ export const getMyAppointments = async (req, res) => {
 
 export const getTodayAppointments = async (req, res) => {
   try {
-    const doctorProfile = await doctorService.getDoctorProfileByEmail(
-      req.user.email,
-    );
-
-    if (!doctorProfile) {
-      return errorResponse(res, "Doctor profile not found", 404);
-    }
+    const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
+    if (!doctorProfile) return;
 
     const appointments = await doctorService.getTodayAppointments(
       doctorProfile.id,
     );
-
     return successResponse(
       res,
       appointments,
@@ -186,18 +173,12 @@ export const getTodayAppointments = async (req, res) => {
 
 export const getUpcomingAppointments = async (req, res) => {
   try {
-    const doctorProfile = await doctorService.getDoctorProfileByEmail(
-      req.user.email,
-    );
-
-    if (!doctorProfile) {
-      return errorResponse(res, "Doctor profile not found", 404);
-    }
+    const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
+    if (!doctorProfile) return;
 
     const appointments = await doctorService.getUpcomingAppointments(
       doctorProfile.id,
     );
-
     return successResponse(
       res,
       appointments,
@@ -215,18 +196,12 @@ export const getUpcomingAppointments = async (req, res) => {
 
 export const getPastAppointments = async (req, res) => {
   try {
-    const doctorProfile = await doctorService.getDoctorProfileByEmail(
-      req.user.email,
-    );
-
-    if (!doctorProfile) {
-      return errorResponse(res, "Doctor profile not found", 404);
-    }
+    const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
+    if (!doctorProfile) return;
 
     const appointments = await doctorService.getPastAppointments(
       doctorProfile.id,
     );
-
     return successResponse(
       res,
       appointments,
@@ -242,30 +217,74 @@ export const getPastAppointments = async (req, res) => {
   }
 };
 
+// ═══ UPDATE APPOINTMENT STATUS — with proper flow enforcement ═══
 export const updateAppointmentStatus = async (req, res) => {
   try {
     const { status, notes } = req.body;
-    const validStatuses = ["PENDING", "CONFIRMED", "CANCELLED", "COMPLETED"];
 
-    if (!validStatuses.includes(status)) {
-      return errorResponse(res, "Invalid status", 400);
+    // Only allow these statuses from doctor side
+    const allowedStatuses = ["CONFIRMED", "CANCELLED", "COMPLETED"];
+    if (!allowedStatuses.includes(status)) {
+      return errorResponse(
+        res,
+        "Invalid status. Doctor can only confirm, cancel or complete appointments.",
+        400,
+      );
     }
 
     const appointment = await doctorService.getAppointmentById(req.params.id);
+    if (!appointment) return errorResponse(res, "Appointment not found", 404);
 
-    if (!appointment) {
-      return errorResponse(res, "Appointment not found", 404);
-    }
+    const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
+    if (!doctorProfile) return;
 
-    const doctorProfile = await doctorService.getDoctorProfileByEmail(
-      req.user.email,
-    );
-
-    if (!doctorProfile || appointment.doctorId !== doctorProfile.id) {
+    // Make sure doctor owns this appointment
+    if (appointment.doctorId !== doctorProfile.id) {
       return errorResponse(
         res,
         "You can only update your own appointments",
         403,
+      );
+    }
+
+    // ═══ STATUS FLOW RULES ═══
+
+    // Can only CONFIRM a PENDING appointment
+    if (status === "CONFIRMED" && appointment.status !== "PENDING") {
+      return errorResponse(
+        res,
+        "Only pending appointments can be confirmed",
+        400,
+      );
+    }
+
+    // Can only COMPLETE a CONFIRMED appointment
+    if (status === "COMPLETED" && appointment.status !== "CONFIRMED") {
+      return errorResponse(
+        res,
+        "Only confirmed appointments can be marked as completed",
+        400,
+      );
+    }
+
+    // Can only CANCEL a PENDING or CONFIRMED appointment
+    if (
+      status === "CANCELLED" &&
+      !["PENDING", "CONFIRMED"].includes(appointment.status)
+    ) {
+      return errorResponse(
+        res,
+        "Only pending or confirmed appointments can be cancelled",
+        400,
+      );
+    }
+
+    // If completing — require notes
+    if (status === "COMPLETED" && !notes) {
+      return errorResponse(
+        res,
+        "Please add consultation notes before marking as completed",
+        400,
       );
     }
 
@@ -274,7 +293,35 @@ export const updateAppointmentStatus = async (req, res) => {
       status,
       notes,
     );
+    if (status === "CONFIRMED") {
+      sendAppointmentConfirmed(appointment.user.email, appointment.user.name, {
+        doctorName: doctorProfile.name,
+        date: appointment.date.toDateString(),
+        timeSlot: appointment.timeSlot,
+        hospital: doctorProfile.hospital,
+      });
+    }
 
+    if (status === "CANCELLED") {
+      sendAppointmentRejected(
+        appointment.user.email,
+        appointment.user.name,
+        {
+          doctorName: doctorProfile.name,
+          date: appointment.date.toDateString(),
+          timeSlot: appointment.timeSlot,
+        },
+        notes,
+      );
+    }
+
+    if (status === "COMPLETED") {
+      sendAppointmentCompleted(appointment.user.email, appointment.user.name, {
+        doctorName: doctorProfile.name,
+        date: appointment.date.toDateString(),
+        timeSlot: appointment.timeSlot,
+      });
+    }
     return successResponse(
       res,
       updated,
@@ -290,6 +337,7 @@ export const updateAppointmentStatus = async (req, res) => {
   }
 };
 
+// ═══ ADD CONSULTATION NOTES ═══
 export const addConsultationNotes = async (req, res) => {
   try {
     const { consultationNotes, prescription, diagnosis } = req.body;
@@ -303,20 +351,25 @@ export const addConsultationNotes = async (req, res) => {
     }
 
     const appointment = await doctorService.getAppointmentById(req.params.id);
+    if (!appointment) return errorResponse(res, "Appointment not found", 404);
 
-    if (!appointment) {
-      return errorResponse(res, "Appointment not found", 404);
-    }
+    const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
+    if (!doctorProfile) return;
 
-    const doctorProfile = await doctorService.getDoctorProfileByEmail(
-      req.user.email,
-    );
-
-    if (!doctorProfile || appointment.doctorId !== doctorProfile.id) {
+    if (appointment.doctorId !== doctorProfile.id) {
       return errorResponse(
         res,
         "You can only add notes to your own appointments",
         403,
+      );
+    }
+
+    // Can only add notes to CONFIRMED or COMPLETED appointments
+    if (!["CONFIRMED", "COMPLETED"].includes(appointment.status)) {
+      return errorResponse(
+        res,
+        "Can only add notes to confirmed or completed appointments",
+        400,
       );
     }
 
@@ -341,6 +394,7 @@ export const addConsultationNotes = async (req, res) => {
   }
 };
 
+// ═══ BULK CONFIRM ═══
 export const bulkConfirmAppointments = async (req, res) => {
   try {
     const { appointmentIds } = req.body;
@@ -349,13 +403,8 @@ export const bulkConfirmAppointments = async (req, res) => {
       return errorResponse(res, "appointmentIds array is required", 400);
     }
 
-    const doctorProfile = await doctorService.getDoctorProfileByEmail(
-      req.user.email,
-    );
-
-    if (!doctorProfile) {
-      return errorResponse(res, "Doctor profile not found", 404);
-    }
+    const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
+    if (!doctorProfile) return;
 
     const result = await doctorService.bulkConfirmAppointments(
       doctorProfile.id,
@@ -377,19 +426,16 @@ export const bulkConfirmAppointments = async (req, res) => {
   }
 };
 
+// ═══ DOWNLOAD PATIENT REPORT ═══
 export const downloadPatientReport = async (req, res) => {
   try {
     const appointment = await doctorService.getAppointmentById(req.params.id);
+    if (!appointment) return errorResponse(res, "Appointment not found", 404);
 
-    if (!appointment) {
-      return errorResponse(res, "Appointment not found", 404);
-    }
+    const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
+    if (!doctorProfile) return;
 
-    const doctorProfile = await doctorService.getDoctorProfileByEmail(
-      req.user.email,
-    );
-
-    if (!doctorProfile || appointment.doctorId !== doctorProfile.id) {
+    if (appointment.doctorId !== doctorProfile.id) {
       return errorResponse(
         res,
         "You can only download reports from your own appointments",
@@ -411,13 +457,8 @@ export const downloadPatientReport = async (req, res) => {
 // ═══ PATIENT MANAGEMENT ═══
 export const getMyPatients = async (req, res) => {
   try {
-    const doctorProfile = await doctorService.getDoctorProfileByEmail(
-      req.user.email,
-    );
-
-    if (!doctorProfile) {
-      return errorResponse(res, "Doctor profile not found", 404);
-    }
+    const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
+    if (!doctorProfile) return;
 
     const patients = await doctorService.getDoctorPatients(doctorProfile.id);
     return successResponse(res, patients, "Patients fetched successfully");
@@ -428,22 +469,15 @@ export const getMyPatients = async (req, res) => {
 
 export const getPatientById = async (req, res) => {
   try {
-    const doctorProfile = await doctorService.getDoctorProfileByEmail(
-      req.user.email,
-    );
-
-    if (!doctorProfile) {
-      return errorResponse(res, "Doctor profile not found", 404);
-    }
+    const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
+    if (!doctorProfile) return;
 
     const patient = await doctorService.getPatientById(
       doctorProfile.id,
       req.params.userId,
     );
 
-    if (!patient) {
-      return notFoundResponse(res, "Patient not found");
-    }
+    if (!patient) return notFoundResponse(res, "Patient not found");
 
     return successResponse(res, patient, "Patient fetched successfully");
   } catch (error) {
@@ -453,19 +487,13 @@ export const getPatientById = async (req, res) => {
 
 export const getPatientAppointments = async (req, res) => {
   try {
-    const doctorProfile = await doctorService.getDoctorProfileByEmail(
-      req.user.email,
-    );
-
-    if (!doctorProfile) {
-      return errorResponse(res, "Doctor profile not found", 404);
-    }
+    const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
+    if (!doctorProfile) return;
 
     const appointments = await doctorService.getPatientAppointments(
       doctorProfile.id,
       req.params.userId,
     );
-
     return successResponse(
       res,
       appointments,
@@ -486,7 +514,6 @@ export const getPatientPredictions = async (req, res) => {
     const predictions = await doctorService.getPatientPredictions(
       req.params.userId,
     );
-
     return successResponse(
       res,
       predictions,

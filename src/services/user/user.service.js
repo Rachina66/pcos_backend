@@ -40,3 +40,25 @@ export const getUserAppointmentById = async (id, userId) => {
     include: { doctor: true },
   });
 };
+
+// Check if slot is already taken
+export const isSlotTaken = async (doctorId, date, timeSlot) => {
+  const existing = await prisma.appointment.findFirst({
+    where: {
+      doctorId,
+      date: new Date(date),
+      timeSlot,
+      status: { in: ["PENDING", "CONFIRMED"] },
+    },
+  });
+  return !!existing;
+};
+
+// Cancel appointment
+export const cancelAppointment = async (id) => {
+  return await prisma.appointment.update({
+    where: { id },
+    data: { status: "CANCELLED" },
+    include: { doctor: true },
+  });
+};

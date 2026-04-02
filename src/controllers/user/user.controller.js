@@ -7,7 +7,7 @@ import {
 } from "../../utils/apiResponse.utils.js";
 import {
   sendBookingConfirmation,
-  sendAppointmentCancelledToDoctor,
+  sendCancellationToDoctor,
 } from "../../utils/email.utils.js";
 import {
   isSlotInPast,
@@ -109,15 +109,12 @@ export const bookAppointment = async (req, res) => {
       reason: reason || null,
       reportFile,
     });
-
-    // Send booking confirmation email (non-blocking)
     sendBookingConfirmation(req.user.email, req.user.name, {
       doctorName: doctor.name,
       date: new Date(date).toDateString(),
       timeSlot,
       hospital: doctor.hospital,
     });
-
     return successResponse(
       res,
       appointment,
@@ -178,9 +175,7 @@ export const cancelAppointment = async (req, res) => {
     }
 
     const cancelled = await userService.cancelAppointment(id);
-
-    // Send cancellation email to doctor (non-blocking)
-    sendAppointmentCancelledToDoctor(
+    sendCancellationToDoctor(
       appointment.doctor.email,
       appointment.doctor.name,
       {

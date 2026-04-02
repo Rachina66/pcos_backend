@@ -18,7 +18,7 @@ export const registerSchema = z.object({
     .nonempty("Password is required")
     .regex(
       passwordRegex,
-      "Password must be at least 8 characters, include uppercase, lowercase, number, and special character"
+      "Password must be at least 8 characters, include uppercase, lowercase, number, and special character",
     ),
   role: z.enum(["USER", "ADMIN"]).optional(),
 });
@@ -31,8 +31,5 @@ export const loginSchema = z.object({
   password: z
     .string()
     .nonempty("Password is required")
-    .regex(
-      passwordRegex,
-      "Password must be at least 8 characters, include uppercase, lowercase, number, and special character"
-    ),
+    .min(6, "Password must be at least 6 characters"),
 });

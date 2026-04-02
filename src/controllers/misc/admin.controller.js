@@ -1,5 +1,8 @@
 import * as adminService from "../services/admin.service.js";
-import { successResponse, errorResponse } from "../utils/apiResponse.utils.js";
+import {
+  successResponse,
+  errorResponse,
+} from "../../utils/apiResponse.utils.js";
 
 export const getDashboardStats = async (req, res) => {
   try {

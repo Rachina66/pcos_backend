@@ -3,8 +3,8 @@ import * as appointmentController from "../controllers/appointment.controller.js
 import {
   authenticate,
   authorize,
-} from "../middleware/authenticate.middleware.js";
-import { uploadReport } from "../middleware/upload.middleware.js";
+} from "../../middleware/authenticate.middleware.js";
+import { uploadReport } from "../../middleware/upload.middleware.js";
 
 const router = express.Router();
 

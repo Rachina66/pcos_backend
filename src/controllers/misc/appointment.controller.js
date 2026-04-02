@@ -4,7 +4,7 @@ import {
   successResponse,
   errorResponse,
   notFoundResponse,
-} from "../utils/apiResponse.utils.js";
+} from "../../utils/apiResponse.utils.js";
 import path from "path";
 
 // POST /api/appointments - User books appointment

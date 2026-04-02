@@ -3,7 +3,7 @@ import {
   successResponse,
   errorResponse,
   notFoundResponse,
-} from "../utils/apiResponse.utils.js";
+} from "../../utils/apiResponse.utils.js";
 
 // GET /api/doctors - Public (users can see)
 export const getAllDoctors = async (req, res) => {

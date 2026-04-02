@@ -3,7 +3,7 @@ import * as adminController from "../controllers/admin.controller.js";
 import {
   authenticate,
   authorize,
-} from "../middleware/authenticate.middleware.js";
+} from "../../middleware/authenticate.middleware.js";
 
 const router = express.Router();
 

@@ -186,7 +186,6 @@ export const getAppointmentById = async (id) => {
     },
   });
 };
-
 export const updateAppointmentStatus = async (id, status, notes) => {
   return await prisma.appointment.update({
     where: { id },

@@ -3,7 +3,7 @@ import * as doctorDashboardController from "../controllers/doctor-dashboard.cont
 import {
   authenticate,
   authorize,
-} from "../middleware/authenticate.middleware.js";
+} from "../../middleware/authenticate.middleware.js";
 
 const router = express.Router();
 

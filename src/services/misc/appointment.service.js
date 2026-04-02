@@ -1,4 +1,4 @@
-import prisma from "../config/prismaclient.js";
+import prisma from "../../config/prismaclient.js";
 
 export const createAppointment = async (data) => {
   return await prisma.appointment.create({

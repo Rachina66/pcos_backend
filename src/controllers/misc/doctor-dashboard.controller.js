@@ -1,5 +1,8 @@
-import prisma from "../config/prismaclient.js";
-import { successResponse, errorResponse } from "../utils/apiResponse.utils.js";
+import prisma from "../../config/prismaclient.js";
+import {
+  successResponse,
+  errorResponse,
+} from "../../utils/apiResponse.utils.js";
 
 // Get doctor's appointments
 export const getMyAppointments = async (req, res) => {

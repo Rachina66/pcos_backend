@@ -9,6 +9,7 @@ import userRoutes from "./user/user.routes.js";
 import publicRoutes from "./public/public.routes.js";
 import adminRoutes from "./admin/admin.routes.js";
 import doctorRoutes from "./doctor/doctor.routes.js";
+import cycleRoutes from "./cycle/cycle.routes.js";
 const router = express.Router();
 
 // Health check route
@@ -39,5 +40,8 @@ router.use("/admin", adminRoutes);
 
 //doctor routes
 router.use("/doctor", doctorRoutes);
+
+//cycle routes
+router.use("/cycle", cycleRoutes);
 
 export default router;

@@ -16,6 +16,8 @@ model User {
   updatedAt    DateTime      @updatedAt
   predictions  Prediction[]
   appointments Appointment[]
+  cycleLogs    CycleLog[]   // ← add this
+  symptomLogs  SymptomLog[]
 }
 
 enum Role {
@@ -131,4 +133,31 @@ enum ContentCategory {
   MENTAL_HEALTH
   TREATMENT
   LIFESTYLE
+}
+
+
+model CycleLog {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  startDate    DateTime
+  endDate      DateTime?
+  periodLength Int?
+  symptoms     String[]
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model SymptomLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  date      DateTime @default(now())
+  symptoms  String[]
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }

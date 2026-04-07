@@ -8,7 +8,7 @@ const router = express.Router();
 // All user routes require authentication
 router.use(authenticate);
 
-// ═══ PREDICTIONS ═══
+//prediction
 router.post("/predictions", userController.createPrediction);
 router.get("/predictions", userController.getMyPredictions);
 

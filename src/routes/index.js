@@ -20,8 +20,8 @@ router.get("/health", (req, res) => {
 // Mount Auth module
 router.use("/auth", authRoutes);
 
-// // Mount Prediction module
-// router.use("/prediction", predictionRoutes);
+// Mount Prediction module
+router.use("/prediction", predictionRoutes);
 
 // Mount admin feature routes
 // router.use("/doctors", doctorRoutes);
@@ -42,6 +42,6 @@ router.use("/admin", adminRoutes);
 router.use("/doctor", doctorRoutes);
 
 //cycle routes
-router.use("/cycle", cycleRoutes);
+router.use("/user/cycles", cycleRoutes);
 
 export default router;

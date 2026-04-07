@@ -1,13 +1,12 @@
 import express from "express";
 import prisma from "../config/prismaclient.js";
 import { spawn } from "child_process";
+import { authenticate } from "../middleware/authenticate.middleware.js";
 import path from "path";
 
 const router = express.Router();
 
-
-// Helper: Input Validation
-
+// check if the input values are within valid medical ranges
 function validateInput(data) {
   const errors = [];
 
@@ -65,8 +64,8 @@ function validateInput(data) {
   return errors;
 }
 
-
-// Run Python Prediction
+// runs the python ML model and waits for the result
+// kills the process if it takes more than 10 seconds
 
 function runPythonPrediction(inputData, timeout = 10000) {
   return new Promise((resolve, reject) => {
@@ -108,17 +107,17 @@ function runPythonPrediction(inputData, timeout = 10000) {
   });
 }
 
+// user submits health data, run the model and save the result
 
-// POST /api/predict
-
-router.post("/predict", async (req, res) => {
+router.post("/predict", authenticate, async (req, res) => {
   try {
-    const { userId, data } = req.body;
+    const { data } = req.body;
+    const userId = req.user.id;
 
-    if (!userId || !data) {
+    if (!data) {
       return res.status(400).json({
         success: false,
-        error: "userId and data are required",
+        error: "data is required",
       });
     }
 
@@ -149,19 +148,21 @@ router.post("/predict", async (req, res) => {
       "Pregnant_Y/N": data.pregnant ? 1 : 0,
     };
 
-    const result = await runPythonPrediction(pythonInput, 10000);
+    const result = await runPythonPrediction(pythonInput, 60000);
 
     if (!result.success) {
       return res.status(500).json(result);
     }
+
+    // save both the inputs and the result to the database
     const prediction = await prisma.prediction.create({
       data: {
-        userId: String(userId), 
+        userId,
         age: Number(data.age),
         weight: Number(data.weight),
         height: Number(data.height),
         bmi: Number(data.bmi),
-        bloodGroup: data.bloodGroup,
+        bloodGroup: data.bloodGroup || "Unknown",
         cycleLengthDays: Number(data.cycleLengthDays),
         periodLengthDays: Number(data.periodLengthDays),
         regularOvulation: Boolean(data.regularOvulation),
@@ -181,7 +182,7 @@ router.post("/predict", async (req, res) => {
       },
     });
 
-    res.json({
+    return res.status(201).json({
       success: true,
       predictionId: prediction.id,
       result: {
@@ -193,27 +194,17 @@ router.post("/predict", async (req, res) => {
     });
   } catch (error) {
     console.error("Prediction error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: "Prediction failed",
     });
   }
 });
 
-
-// GET /api/predictions/:userId
-
-router.get("/predictions/:userId", async (req, res) => {
+// get the last 10 predictions for the logged in user
+router.get("/predictions", authenticate, async (req, res) => {
   try {
-    const userId = req.params.userId;
-
-    if (!userId) {
-      return res.status(400).json({
-        // ✅ FIXED - added this line back
-        success: false,
-        error: "Invalid userId",
-      });
-    }
+    const userId = req.user.id;
 
     const predictions = await prisma.prediction.findMany({
       where: { userId },
@@ -221,13 +212,13 @@ router.get("/predictions/:userId", async (req, res) => {
       take: 10,
     });
 
-    res.json({
+    return res.json({
       success: true,
       predictions,
     });
   } catch (error) {
     console.error("Error fetching predictions:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: "Failed to fetch predictions",
     });

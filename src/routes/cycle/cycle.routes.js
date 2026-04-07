@@ -13,7 +13,7 @@ router.get("/latest", cycleController.getLatestCycle);
 router.put("/:id", cycleController.updateCycleLog);
 router.delete("/:id", cycleController.deleteCycleLog);
 
-// ═══ PREDICTION ═══
+// ═══ PREDICTION 
 router.get("/prediction", cycleController.predictNextPeriod);
 
 // ═══ SYMPTOMS ═══

@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import { getUsersWithUpcomingPeriod } from "../services/cycle/cycle.service.js";
-import { sendPeriodReminder } from "../utils/periodEmail.utils.js"; // ← correct filename
+import { sendPeriodReminder } from "../utils/periodEmail.utils.js"; 
 
 export const startCyclePredictionJob = () => {
   cron.schedule("0 8 * * *", async () => {

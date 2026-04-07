@@ -18,6 +18,7 @@ model User {
   appointments Appointment[]
   cycleLogs    CycleLog[]   // ← add this
   symptomLogs  SymptomLog[]
+  mealPlans    MealPlan[]
 }
 
 enum Role {
@@ -161,3 +162,71 @@ model SymptomLog {
 
   @@index([userId])
 }
+
+model Meal {
+  id           String       @id @default(uuid())
+  name         String
+  description  String
+  whyItHelps   String
+  ingredients  String[]
+  recipe       String[]
+  mealType     MealType
+  riskCategory RiskCategory
+  isVeg        Boolean      @default(false)
+  calories     Int?
+  carbs        Int?
+  prepTime     String?
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  breakfastDays MealPlanDay[] @relation("Breakfast")
+  lunchDays     MealPlanDay[] @relation("Lunch")
+  dinnerDays    MealPlanDay[] @relation("Dinner")
+  snackDays     MealPlanDay[] @relation("Snack")
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACK
+}
+
+enum RiskCategory {
+  HIGH_RISK
+  LOW_RISK
+  GENERAL
+}
+
+
+model MealPlan {
+  id           String         @id @default(uuid())
+  userId       String?        // null = template, has value = user's custom plan
+  user         User?          @relation(fields: [userId], references: [id])
+  riskCategory RiskCategory
+  weekNumber   Int            @default(1)
+  isActive     Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  days         MealPlanDay[]
+
+  @@index([userId])
+}
+
+model MealPlanDay {
+  id          String   @id @default(uuid())
+  mealPlanId  String
+  mealPlan    MealPlan @relation(fields: [mealPlanId], references: [id])
+  dayNumber   Int      // 1-7
+  breakfastId String?
+  lunchId     String?
+  dinnerId    String?
+  snackId     String?
+  breakfast   Meal?    @relation("Breakfast", fields: [breakfastId], references: [id])
+  lunch       Meal?    @relation("Lunch", fields: [lunchId], references: [id])
+  dinner      Meal?    @relation("Dinner", fields: [dinnerId], references: [id])
+  snack       Meal?    @relation("Snack", fields: [snackId], references: [id])
+
+  @@index([mealPlanId])
+}
+

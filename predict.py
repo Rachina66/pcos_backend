@@ -15,9 +15,7 @@ import os
 import warnings
 warnings.filterwarnings('ignore')
 
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 
 def load_model():
     """Load model using absolute path"""

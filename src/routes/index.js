@@ -10,6 +10,7 @@ import publicRoutes from "./public/public.routes.js";
 import adminRoutes from "./admin/admin.routes.js";
 import doctorRoutes from "./doctor/doctor.routes.js";
 import cycleRoutes from "./cycle/cycle.routes.js";
+import profileRoutes from "./profile/profile.routes.js";
 const router = express.Router();
 
 // Health check route
@@ -22,6 +23,9 @@ router.use("/auth", authRoutes);
 
 // Mount Prediction module
 router.use("/prediction", predictionRoutes);
+
+// Mount Profile module (New)
+router.use("/profile", profileRoutes);
 
 // Mount admin feature routes
 // router.use("/doctors", doctorRoutes);

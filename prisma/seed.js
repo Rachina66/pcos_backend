@@ -8,9 +8,9 @@ const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
 
 const meals = [
-  // ═══════════════════════════
-  // HIGH RISK MEALS
-  // ═══════════════════════════
+  
+  //High risk Meals
+  
 
   // BREAKFAST
   {
@@ -734,9 +734,9 @@ const meals = [
     isVeg: true,
   },
 
-  // ═══════════════════════════
-  // GENERAL MEALS
-  // ═══════════════════════════
+  
+  //General Meals
+
 
   // BREAKFAST
   {

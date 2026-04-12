@@ -3,10 +3,10 @@ import bcrypt from "bcrypt";
 
 const SALT_ROUNDS = 10;
 
-// ═══ In-memory OTP store (key: email, value: { otp, expiresAt }) ═══
+//In-memory OTP store (key: email, value: { otp, expiresAt })
 const otpStore = new Map();
 
-// ═══ UPDATE NAME ═══
+//UPDATE NAME
 export const updateName = async (userId, name) => {
   return prisma.user.update({
     where: { id: userId },
@@ -15,7 +15,7 @@ export const updateName = async (userId, name) => {
   });
 };
 
-// ═══ CHANGE PASSWORD (requires current password) ═══
+//CHANGE PASSWORD (requires current password)
 export const changePassword = async (userId, currentPassword, newPassword) => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new Error("User not found");
@@ -33,7 +33,7 @@ export const changePassword = async (userId, currentPassword, newPassword) => {
   return true;
 };
 
-// ═══ CHANGE EMAIL (requires password verification) ═══
+//CHANGE EMAIL (requires password verification)
 export const changeEmail = async (userId, newEmail, password) => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new Error("User not found");
@@ -53,7 +53,7 @@ export const changeEmail = async (userId, newEmail, password) => {
   });
 };
 
-// ═══ FORGOT PASSWORD – Generate OTP ═══
+//FORGOT PASSWORD – Generate OTP
 export const generateOtp = async (email) => {
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) throw new Error("No account found with this email");
@@ -70,7 +70,7 @@ export const generateOtp = async (email) => {
   return otp;
 };
 
-// ═══ FORGOT PASSWORD – Verify OTP ═══
+//FORGOT PASSWORD – Verify OTP
 export const verifyOtp = (email, otp) => {
   const record = otpStore.get(email);
 
@@ -87,7 +87,7 @@ export const verifyOtp = (email, otp) => {
   return true;
 };
 
-// ═══ FORGOT PASSWORD – Reset Password (after OTP verified) ═══
+//FORGOT PASSWORD – Reset Password (after OTP verified)
 export const resetPassword = async (email, newPassword) => {
   const record = otpStore.get(email);
 

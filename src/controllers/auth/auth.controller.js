@@ -5,7 +5,7 @@ import {
 } from "../../utils/apiResponse.utils.js";
 import * as authService from "../../services/auth/auth.service.js";
 
-// Register new user
+//Register new user
 export const register = async (req, res) => {
   try {
     const result = await authService.register(req.body);
@@ -15,7 +15,7 @@ export const register = async (req, res) => {
   }
 };
 
-// Login existing user
+//Login existing user
 export const login = async (req, res) => {
   try {
     const result = await authService.login(req.body);
@@ -30,7 +30,7 @@ export const login = async (req, res) => {
   }
 };
 
-// Get current user profile
+//Get current user profile
 export const profile = async (req, res) => {
   try {
     const user = await authService.getUserById(req.user.id);

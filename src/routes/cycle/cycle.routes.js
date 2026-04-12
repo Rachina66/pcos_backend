@@ -6,17 +6,17 @@ const router = express.Router();
 
 router.use(authenticate);
 
-// ═══ CYCLE LOGS ═══
+//CYCLE LOGS
 router.post("/", cycleController.logPeriod);
 router.get("/", cycleController.getCycleHistory);
 router.get("/latest", cycleController.getLatestCycle);
 router.put("/:id", cycleController.updateCycleLog);
 router.delete("/:id", cycleController.deleteCycleLog);
 
-// ═══ PREDICTION 
+//PREDICTION
 router.get("/prediction", cycleController.predictNextPeriod);
 
-// ═══ SYMPTOMS ═══
+//SYMPTOMS
 router.post("/symptoms", cycleController.logSymptoms);
 router.get("/symptoms/today", cycleController.getTodaySymptoms);
 router.get("/symptoms/insights", cycleController.getSymptomInsights);

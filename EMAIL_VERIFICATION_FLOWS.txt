@@ -1,0 +1,499 @@
+================================================================================
+            EMAIL VERIFICATION FLOWS - FYP BACKEND DOCUMENTATION
+================================================================================
+Generated: 2026-04-12
+Project: FYP Backend (Node.js / Express / Prisma / PostgreSQL)
+================================================================================
+
+
+TABLE OF CONTENTS
+-----------------
+1.  OTP Storage Mechanism
+2.  Flow 1: Registration & Email Verification
+3.  Flow 2: Forgot Password (OTP Reset)
+4.  Flow 3: Change Password (Logged-in User)
+5.  Flow 4: Change Email (Logged-in User)
+6.  Flow 5: Doctor Registration (Admin - Auto-Verified)
+7.  Email Utility Functions Reference
+8.  Routes Summary Table
+9.  Critical Issues & Gaps
+10. File Path Reference
+
+
+================================================================================
+1. OTP STORAGE MECHANISM
+================================================================================
+
+Both auth and profile services use an IN-MEMORY Map to store OTPs.
+This means OTPs are LOST on server restart.
+
+  auth.service.js    → const otpStore = new Map()  (line ~6)
+  profile.service.js → const otpStore = new Map()  (line ~7)
+
+Structure stored per entry:
+  {
+    email: {
+      otp:       "123456",          // 6-digit numeric string
+      expiresAt: Date.now() + 600000 // 10 minutes from generation
+      verified:  true/false          // set to true after verifyOtp()
+    }
+  }
+
+OTP Generation:
+  Math.floor(100000 + Math.random() * 900000).toString()
+
+OTP Validity: 10 minutes
+
+
+================================================================================
+2. FLOW 1: REGISTRATION & EMAIL VERIFICATION
+================================================================================
+
+PURPOSE:
+  New user registers → receives OTP via email → verifies OTP → account activated
+
+----------------------------------------
+STEP 1: Register User
+----------------------------------------
+Route:       POST /api/auth/register
+Auth:        None (public)
+Validation:  registerSchema (email, password, name, etc.)
+
+  src/routes/auth/auth.routes.js
+    └── POST /register → authController.register()
+
+  src/controllers/auth/auth.controller.js → register()
+    └── calls authService.register(req.body)
+    └── returns { email, otp } in response
+
+  src/services/auth/auth.service.js → register()
+    ├── Check if email already exists (prisma.user.findUnique)
+    ├── Hash password (bcrypt, 10 rounds)
+    ├── Create user: prisma.user.create({ isVerified: false })  ← [SEE ISSUE #1]
+    ├── Generate 6-digit OTP
+    ├── Store OTP in otpStore Map with 10-min expiry
+    └── Return { email, otp }
+
+  src/utils/otpEmail.utils.js → sendVerificationEmail(userEmail, otp)
+    └── Sends HTML email: "Your verification OTP is: XXXXXX"  ← [SEE ISSUE #2]
+
+----------------------------------------
+STEP 2: Verify Email OTP
+----------------------------------------
+Route:       POST /api/auth/verify-email   ← [SEE ISSUE #3 - ROUTE MAY BE MISSING]
+Auth:        None (public)
+
+  src/services/auth/auth.service.js → verifyEmail(email, otp)
+    ├── Retrieve record from otpStore
+    ├── Check OTP exists
+    ├── Check expiry (throw error if expired)
+    ├── Check OTP matches
+    ├── prisma.user.update({ isVerified: true })  ← [SEE ISSUE #1]
+    └── Clear OTP from otpStore
+
+----------------------------------------
+PRISMA FIELDS INVOLVED:
+----------------------------------------
+  User.isVerified  (Boolean)  ← REFERENCED IN CODE BUT MAY BE MISSING FROM SCHEMA
+  User.email       (String)
+  User.password    (String, hashed)
+
+----------------------------------------
+FULL CHAIN:
+----------------------------------------
+  POST /api/auth/register
+    → auth.routes.js
+      → auth.controller.js → register()
+        → auth.service.js → register()
+          → prisma.user.create (isVerified: false)
+          → otpStore.set(email, { otp, expiresAt })
+        ← returns { email, otp }
+      → [SHOULD CALL] otpEmail.utils.js → sendVerificationEmail()
+    ← returns { email, otp } to client
+
+  POST /api/auth/verify-email
+    → auth.routes.js
+      → auth.controller.js → verifyEmail()
+        → auth.service.js → verifyEmail(email, otp)
+          → otpStore.get(email) — check exists & not expired
+          → prisma.user.update (isVerified: true)
+          → otpStore.delete(email)
+        ← returns success
+    ← returns 200 OK
+
+
+================================================================================
+3. FLOW 2: FORGOT PASSWORD (OTP RESET)
+================================================================================
+
+PURPOSE:
+  User forgot password → requests OTP via email → verifies OTP → resets password
+
+  This is the MOST COMPLETE email verification flow in the project.
+
+----------------------------------------
+STEP 1: Request OTP
+----------------------------------------
+Route:       POST /api/profile/forgot-password
+Auth:        None (public)
+Validation:  forgotPasswordSchema (email required)
+
+  src/routes/profile/profile.routes.js
+    └── POST /forgot-password → profileController.forgotPassword()
+
+  src/controllers/profile/profile.controller.js → forgotPassword()
+    ├── calls profileService.generateOtp(email)
+    ├── calls sendOtpEmail(email, otp)   [non-blocking / fire-and-forget]
+    └── returns success message
+
+  src/services/profile/profile.service.js → generateOtp(email)
+    ├── prisma.user.findUnique({ where: { email } }) — check user exists
+    ├── Generate 6-digit OTP
+    ├── otpStore.set(email, { otp, expiresAt: now + 10min })
+    └── return otp
+
+  src/utils/otpEmail.utils.js → sendOtpEmail(userEmail, otp)
+    └── Sends HTML email: Subject "Password Reset OTP"
+        Body includes OTP and 10-minute warning
+
+----------------------------------------
+STEP 2: Verify OTP
+----------------------------------------
+Route:       POST /api/profile/verify-otp
+Auth:        None (public)
+Validation:  verifyOtpSchema (email, otp required)
+
+  src/routes/profile/profile.routes.js
+    └── POST /verify-otp → profileController.verifyOtp()
+
+  src/controllers/profile/profile.controller.js → verifyOtp()
+    ├── calls profileService.verifyOtp(email, otp)
+    └── returns success message (no data returned)
+
+  src/services/profile/profile.service.js → verifyOtp(email, otp)
+    ├── otpStore.get(email) — retrieve record
+    ├── Check record exists (throw "OTP not found or expired")
+    ├── Check expiresAt > Date.now() (throw "OTP expired")
+    ├── Check otp matches (throw "Invalid OTP")
+    ├── otpStore.set(email, { ...record, verified: true })  ← marks as verified
+    └── return true
+
+----------------------------------------
+STEP 3: Reset Password
+----------------------------------------
+Route:       POST /api/profile/reset-password
+Auth:        None (public)
+Validation:  resetPasswordSchema (email, newPassword)
+
+  src/routes/profile/profile.routes.js
+    └── POST /reset-password → profileController.resetPassword()
+
+  src/controllers/profile/profile.controller.js → resetPassword()
+    ├── calls profileService.resetPassword(email, newPassword)
+    └── returns success message
+
+  src/services/profile/profile.service.js → resetPassword(email, newPassword)
+    ├── otpStore.get(email) — retrieve record
+    ├── Check record exists AND record.verified === true (security gate)
+    ├── prisma.user.findUnique({ where: { email } })
+    ├── bcrypt.hash(newPassword, 10)
+    ├── prisma.user.update({ password: hashedPassword })
+    ├── otpStore.delete(email)   ← cleans up OTP
+    └── return true
+
+----------------------------------------
+FULL CHAIN:
+----------------------------------------
+  POST /api/profile/forgot-password
+    → profile.routes.js
+      → profile.controller.js → forgotPassword()
+        → profile.service.js → generateOtp(email)
+          → prisma.user.findUnique (validate user exists)
+          → otpStore.set(email, { otp, expiresAt })
+        → otpEmail.utils.js → sendOtpEmail(email, otp)  [async, non-blocking]
+      ← 200 "OTP sent to email"
+
+  POST /api/profile/verify-otp
+    → profile.routes.js
+      → profile.controller.js → verifyOtp()
+        → profile.service.js → verifyOtp(email, otp)
+          → otpStore.get(email) — validate exists, not expired, matches
+          → otpStore.set(email, { ...record, verified: true })
+      ← 200 "OTP verified"
+
+  POST /api/profile/reset-password
+    → profile.routes.js
+      → profile.controller.js → resetPassword()
+        → profile.service.js → resetPassword(email, newPassword)
+          → otpStore.get(email) — check verified flag === true
+          → prisma.user.update (password = hashed new password)
+          → otpStore.delete(email)
+      ← 200 "Password reset successful"
+
+
+================================================================================
+4. FLOW 3: CHANGE PASSWORD (LOGGED-IN USER)
+================================================================================
+
+PURPOSE:
+  Authenticated user changes their own password → receives confirmation email
+
+Route:       PUT /api/profile/change-password
+Auth:        YES (JWT required via authenticate middleware)
+Validation:  changePasswordSchema (currentPassword, newPassword)
+
+  src/routes/profile/profile.routes.js
+    └── PUT /change-password → authenticate → profileController.changePassword()
+
+  src/controllers/profile/profile.controller.js → changePassword()
+    ├── calls profileService.changePassword(req.user.id, currentPassword, newPassword)
+    ├── calls sendPasswordChangedEmail(req.user.email, req.user.name)  [non-blocking]
+    └── returns success message
+
+  src/services/profile/profile.service.js → changePassword(userId, currentPassword, newPassword)
+    ├── prisma.user.findUnique({ where: { id: userId } })
+    ├── bcrypt.compare(currentPassword, user.password)  — validate current password
+    ├── bcrypt.hash(newPassword, 10)
+    ├── prisma.user.update({ password: hashedPassword })
+    └── return true
+
+  src/utils/otpEmail.utils.js → sendPasswordChangedEmail(userEmail, userName)
+    └── Sends HTML email: Subject "Password Changed Successfully"
+        Includes warning: "If you didn't do this, contact support immediately"
+
+----------------------------------------
+FULL CHAIN:
+----------------------------------------
+  PUT /api/profile/change-password
+    → authenticate middleware (JWT check)
+    → profile.routes.js
+      → profile.controller.js → changePassword()
+        → profile.service.js → changePassword()
+          → bcrypt.compare (verify old password)
+          → prisma.user.update (new hashed password)
+        → otpEmail.utils.js → sendPasswordChangedEmail()  [async, non-blocking]
+      ← 200 "Password changed successfully"
+
+
+================================================================================
+5. FLOW 4: CHANGE EMAIL (LOGGED-IN USER)
+================================================================================
+
+PURPOSE:
+  Authenticated user changes their email address
+
+Route:       PUT /api/profile/change-email
+Auth:        YES (JWT required)
+Validation:  changeEmailSchema (newEmail, password)
+
+  src/routes/profile/profile.routes.js
+    └── PUT /change-email → authenticate → profileController.changeEmail()
+
+  src/controllers/profile/profile.controller.js → changeEmail()
+    ├── calls profileService.changeEmail(req.user.id, newEmail, password)
+    └── returns updated user object
+
+  src/services/profile/profile.service.js → changeEmail(userId, newEmail, password)
+    ├── prisma.user.findUnique({ where: { id: userId } })
+    ├── bcrypt.compare(password, user.password)  — verify identity
+    ├── prisma.user.findUnique({ where: { email: newEmail } }) — check not taken
+    ├── prisma.user.update({ email: newEmail })
+    └── return updated user
+
+  *** NO OTP SENT TO NEW EMAIL — email changes immediately without verification ***
+  [SEE ISSUE #4]
+
+----------------------------------------
+FULL CHAIN:
+----------------------------------------
+  PUT /api/profile/change-email
+    → authenticate middleware (JWT check)
+    → profile.routes.js
+      → profile.controller.js → changeEmail()
+        → profile.service.js → changeEmail()
+          → bcrypt.compare (verify password)
+          → prisma.user.update (email = newEmail) ← IMMEDIATE, NO OTP
+      ← 200 { updated user data }
+
+
+================================================================================
+6. FLOW 5: DOCTOR REGISTRATION (ADMIN - AUTO-VERIFIED)
+================================================================================
+
+PURPOSE:
+  Admin creates a doctor account — skips email verification entirely
+
+Route:       POST /api/auth/register-doctor
+Auth:        YES (JWT + ADMIN role required)
+Validation:  None in route definition
+
+  src/routes/auth/auth.routes.js
+    └── POST /register-doctor → authenticate → authorize(['ADMIN']) → authController.registerDoctor()
+
+  src/controllers/auth/auth.controller.js → registerDoctor()
+    ├── calls authService.registerDoctor(req.body)
+    └── returns { user, token }
+
+  src/services/auth/auth.service.js → registerDoctor()
+    ├── prisma.user.findUnique (check email not taken)
+    ├── bcrypt.hash(password, 10)
+    ├── prisma.user.create({ role: 'DOCTOR', isVerified: true })  ← SKIP verification
+    ├── jwt.sign({ id, email, role }, JWT_SECRET, { expiresIn: '7d' })
+    └── return { user, token }
+
+  No email is sent — doctor receives credentials directly from admin.
+
+----------------------------------------
+FULL CHAIN:
+----------------------------------------
+  POST /api/auth/register-doctor
+    → authenticate middleware
+    → authorize(['ADMIN']) middleware
+    → auth.routes.js
+      → auth.controller.js → registerDoctor()
+        → auth.service.js → registerDoctor()
+          → prisma.user.create (isVerified: true, role: DOCTOR)
+          → jwt.sign (generate token immediately)
+      ← 201 { user, token }
+
+
+================================================================================
+7. EMAIL UTILITY FUNCTIONS REFERENCE
+================================================================================
+
+File: src/utils/otpEmail.utils.js
+----------------------------------
+
+  sendVerificationEmail(userEmail, otp)
+    Purpose:  Send 6-digit OTP for new user email verification
+    Used in:  Registration flow (Flow 1) — [CURRENTLY MAY BE UNUSED server-side]
+    Subject:  "Email Verification OTP"
+
+  sendOtpEmail(userEmail, otp)
+    Purpose:  Send 6-digit OTP for password reset
+    Used in:  profile.controller.js → forgotPassword()
+    Subject:  "Password Reset OTP"
+
+  sendPasswordChangedEmail(userEmail, userName)
+    Purpose:  Confirm password was changed successfully
+    Used in:  profile.controller.js → changePassword()
+    Subject:  "Password Changed Successfully"
+
+File: src/utils/email.utils.js
+-------------------------------
+  (Appointment-related emails — not part of email verification flows)
+
+  sendBookingConfirmation(...)       → appointment booked notification
+  sendAppointmentConfirmed(...)      → appointment confirmed by doctor
+  sendAppointmentRejected(...)       → appointment rejected/cancelled
+  sendCancellationToDoctor(...)      → cancellation notification to doctor
+  sendAppointmentCompleted(...)      → appointment completed notification
+
+
+================================================================================
+8. ROUTES SUMMARY TABLE
+================================================================================
+
+Method | Path                            | Auth     | Flow
+-------|----------------------------------|----------|----------------------------------
+POST   | /api/auth/register              | None     | Flow 1 - Register + generate OTP
+POST   | /api/auth/verify-email          | None     | Flow 1 - Verify registration OTP
+POST   | /api/auth/login                 | None     | Login (blocked if !isVerified)
+POST   | /api/auth/register-doctor       | ADMIN    | Flow 5 - Doctor (auto-verified)
+POST   | /api/profile/forgot-password    | None     | Flow 2 - Step 1: Generate reset OTP
+POST   | /api/profile/verify-otp         | None     | Flow 2 - Step 2: Verify OTP
+POST   | /api/profile/reset-password     | None     | Flow 2 - Step 3: Reset password
+PUT    | /api/profile/change-password    | JWT      | Flow 3 - Change password + email
+PUT    | /api/profile/change-email       | JWT      | Flow 4 - Change email (no OTP)
+GET    | /api/auth/profile               | JWT      | Get current user profile
+
+
+================================================================================
+9. CRITICAL ISSUES & GAPS
+================================================================================
+
+ISSUE #1 — isVerified field may be missing from Prisma schema
+  Location: prisma/schema.prisma → User model
+  Impact:   prisma.user.create/update with isVerified will throw runtime error
+  Fix:      Add `isVerified Boolean @default(false)` to User model + run migration
+  Code refs:
+    - auth.service.js → register()        (isVerified: false)
+    - auth.service.js → verifyEmail()     (isVerified: true)
+    - auth.service.js → registerDoctor()  (isVerified: true)
+
+ISSUE #2 — sendVerificationEmail() not called server-side in register flow
+  Location: auth.service.js → register() or auth.controller.js → register()
+  Impact:   OTP is generated but email never sent automatically
+  Fix:      Call sendVerificationEmail(email, otp) inside register controller
+
+ISSUE #3 — No POST /api/auth/verify-email route exposed
+  Location: src/routes/auth/auth.routes.js
+  Impact:   verifyEmail() service exists but is unreachable via API
+  Fix:      Add route: router.post('/verify-email', authController.verifyEmail)
+            Add controller: authController.verifyEmail() calling authService.verifyEmail()
+
+ISSUE #4 — Email change has NO OTP verification of new email
+  Location: profile.service.js → changeEmail()
+  Impact:   User can change to any email without verifying they own it
+  Fix:      Send OTP to new email, require verification before committing the change
+
+ISSUE #5 — OTP stored in memory only (non-persistent)
+  Location: auth.service.js and profile.service.js → otpStore Map
+  Impact:   All pending OTPs lost on server restart
+  Fix:      Store OTPs in database (e.g., add OtpRecord model to Prisma schema)
+
+ISSUE #6 — No rate limiting on OTP generation
+  Location: profile.service.js → generateOtp()
+  Impact:   Endpoint can be spammed to flood user's inbox
+  Fix:      Add cooldown (e.g., reject new OTP if one was sent < 1 minute ago)
+
+ISSUE #7 — Login may check isVerified field that doesn't exist in schema
+  Location: auth.service.js → login()
+  Impact:   Either login never blocks unverified users, or throws runtime error
+  Fix:      Resolve after Issue #1 (add isVerified to schema)
+
+ISSUE #8 — No resend OTP endpoint
+  Location: Missing route
+  Impact:   Users stuck if OTP email not received
+  Fix:      Add POST /api/auth/resend-verification that calls generateOtp + sendVerificationEmail
+
+
+================================================================================
+10. FILE PATH REFERENCE
+================================================================================
+
+Routes:
+  src/routes/auth/auth.routes.js
+  src/routes/profile/profile.routes.js
+
+Controllers:
+  src/controllers/auth/auth.controller.js
+  src/controllers/profile/profile.controller.js
+
+Services:
+  src/services/auth/auth.service.js
+  src/services/profile/profile.service.js
+
+Utils / Email:
+  src/utils/otpEmail.utils.js         ← OTP + password emails
+  src/utils/email.utils.js            ← Appointment emails
+
+Middleware:
+  src/middleware/authenticate.middleware.js  ← JWT auth + role authorization
+
+Prisma:
+  prisma/schema.prisma                ← Database models (check isVerified field)
+  prisma/seed.js                      ← Seed data
+
+Validation Schemas:
+  src/utils/validations/auth.schema.js
+  src/utils/validations/profile.schema.js
+
+Config:
+  src/config/prismaclient.js
+  .env  (JWT_SECRET, EMAIL credentials)
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================

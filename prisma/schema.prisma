@@ -14,9 +14,10 @@ model User {
   role         Role          @default(USER)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
+  isVerified   Boolean  @default(false)
   predictions  Prediction[]
   appointments Appointment[]
-  cycleLogs    CycleLog[]   // ← add this
+  cycleLogs    CycleLog[]   
   symptomLogs  SymptomLog[]
   mealPlans    MealPlan[]
 }

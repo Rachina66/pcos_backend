@@ -1,6 +1,6 @@
 import prisma from "../../config/prismaclient.js";
 
-// ═══ LOG A PERIOD ═══
+//LOG A PERIOD
 export const logPeriod = async (userId, data) => {
   const { startDate, endDate, symptoms, notes } = data;
 
@@ -38,7 +38,7 @@ export const logPeriod = async (userId, data) => {
   });
 };
 
-// ═══ GET CYCLE HISTORY ═══
+//GET CYCLE HISTORY
 export const getCycleHistory = async (userId) => {
   return await prisma.cycleLog.findMany({
     where: { userId },
@@ -46,7 +46,7 @@ export const getCycleHistory = async (userId) => {
   });
 };
 
-// ═══ GET LATEST CYCLE ═══
+//GET LATEST CYCLE
 export const getLatestCycle = async (userId) => {
   return await prisma.cycleLog.findFirst({
     where: { userId },
@@ -54,7 +54,7 @@ export const getLatestCycle = async (userId) => {
   });
 };
 
-// ═══ UPDATE CYCLE LOG ═══
+//UPDATE CYCLE LOG
 export const updateCycleLog = async (id, userId, data) => {
   const cycle = await prisma.cycleLog.findFirst({
     where: { id, userId },
@@ -84,7 +84,7 @@ export const updateCycleLog = async (id, userId, data) => {
   });
 };
 
-// ═══ DELETE CYCLE LOG ═══
+//DELETE CYCLE LOG
 export const deleteCycleLog = async (id, userId) => {
   const cycle = await prisma.cycleLog.findFirst({
     where: { id, userId },
@@ -93,7 +93,7 @@ export const deleteCycleLog = async (id, userId) => {
   return await prisma.cycleLog.delete({ where: { id } });
 };
 
-// ═══ PREDICT NEXT PERIOD ═══
+//PREDICT NEXT PERIOD
 export const predictNextPeriod = async (userId) => {
   const cycles = await prisma.cycleLog.findMany({
     where: { userId },
@@ -109,7 +109,7 @@ export const predictNextPeriod = async (userId) => {
     };
   }
 
-  // Only 1 cycle — use default 28 days
+  //Only 1 cycle — use default 28 days
   if (cycles.length === 1) {
     const nextDate = new Date(cycles[0].startDate);
     nextDate.setDate(nextDate.getDate() + 28);
@@ -137,7 +137,7 @@ export const predictNextPeriod = async (userId) => {
     };
   }
 
-  // Calculate gaps between cycle start dates
+  //Calculate gaps between cycle start dates
   const gaps = [];
   for (let i = 0; i < cycles.length - 1; i++) {
     const gap = Math.round(
@@ -151,7 +151,7 @@ export const predictNextPeriod = async (userId) => {
     gaps.reduce((a, b) => a + b, 0) / gaps.length,
   );
 
-  // Next period date
+  //Next period date
   const nextPeriodDate = new Date(cycles[0].startDate);
   nextPeriodDate.setDate(nextPeriodDate.getDate() + avgCycleLength);
 
@@ -159,7 +159,7 @@ export const predictNextPeriod = async (userId) => {
     (nextPeriodDate - new Date()) / (1000 * 60 * 60 * 24),
   );
 
-  // Avg period duration
+  //Avg period duration
   const durations = cycles
     .filter((c) => c.periodLength)
     .map((c) => c.periodLength);
@@ -169,13 +169,13 @@ export const predictNextPeriod = async (userId) => {
       ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
       : null;
 
-  // Regularity — variation in cycle lengths
+  //Regularity — variation in cycle lengths
   const maxGap = Math.max(...gaps);
   const minGap = Math.min(...gaps);
   const variation = maxGap - minGap;
   const regularity = variation <= 7 ? "Regular" : "Irregular";
 
-  // Current cycle day
+  //Current cycle day
   const currentCycleDay =
     Math.round(
       (new Date() - new Date(cycles[0].startDate)) / (1000 * 60 * 60 * 24),
@@ -195,7 +195,7 @@ export const predictNextPeriod = async (userId) => {
   };
 };
 
-// ═══ LOG TODAY'S SYMPTOMS ═══
+//LOG TODAY'S SYMPTOMS
 export const logSymptoms = async (userId, symptoms) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -221,7 +221,7 @@ export const logSymptoms = async (userId, symptoms) => {
   });
 };
 
-// ═══ GET TODAY'S SYMPTOMS ═══
+//GET TODAY'S SYMPTOMS
 export const getTodaySymptoms = async (userId) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -236,7 +236,7 @@ export const getTodaySymptoms = async (userId) => {
   });
 };
 
-// ═══ SYMPTOM INSIGHTS ═══
+//SYMPTOM INSIGHTS
 export const getSymptomInsights = async (userId) => {
   const cycles = await prisma.cycleLog.findMany({
     where: { userId },
@@ -251,7 +251,7 @@ export const getSymptomInsights = async (userId) => {
     };
   }
 
-  // Get all unique symptoms across all cycles
+  //Get all unique symptoms across all cycles
   const allSymptoms = [...new Set(cycles.flatMap((c) => c.symptoms))];
 
   if (allSymptoms.length === 0) {
@@ -262,7 +262,7 @@ export const getSymptomInsights = async (userId) => {
   }
 
   const insights = allSymptoms.map((symptom) => {
-    // Presence per cycle oldest → newest
+    //Presence per cycle oldest → newest
     const presence = cycles
       .slice()
       .reverse()
@@ -271,7 +271,7 @@ export const getSymptomInsights = async (userId) => {
     const totalOccurrences = presence.filter(Boolean).length;
     const frequency = Math.round((totalOccurrences / cycles.length) * 100);
 
-    // Trend — compare older half vs newer half
+    //Trend — compare older half vs newer half
     const mid = Math.floor(presence.length / 2);
     const olderHalf = presence.slice(0, mid).filter(Boolean).length;
     const newerHalf = presence.slice(mid).filter(Boolean).length;
@@ -291,7 +291,7 @@ export const getSymptomInsights = async (userId) => {
     };
   });
 
-  // Sort by frequency descending
+  //Sort by frequency descending
   insights.sort((a, b) => b.frequency - a.frequency);
 
   return {
@@ -305,7 +305,7 @@ export const getSymptomInsights = async (userId) => {
   };
 };
 
-// ═══ FOR CRON JOB ═══
+//FOR CRON JOB
 export const getUsersWithUpcomingPeriod = async () => {
   const users = await prisma.user.findMany({
     where: { role: "USER" },

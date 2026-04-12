@@ -14,7 +14,7 @@ import {
   isCancellationTooLate,
 } from "../../utils/appointment.utils.js";
 
-// ═══ PREDICTIONS ═══
+//PREDICTIONS
 export const createPrediction = async (req, res) => {
   try {
     const { data } = req.body;
@@ -63,7 +63,7 @@ export const getMyPredictions = async (req, res) => {
   }
 };
 
-// ═══ APPOINTMENTS ═══
+//APPOINTMENTS
 export const bookAppointment = async (req, res) => {
   try {
     const { doctorId, date, timeSlot, reason } = req.body;
@@ -77,18 +77,18 @@ export const bookAppointment = async (req, res) => {
       );
     }
 
-    // Check doctor exists
+    //Check doctor exists
     const doctor = await doctorService.getDoctorById(doctorId);
     if (!doctor) {
       return notFoundResponse(res, "Doctor not found");
     }
 
-    // Check slot is not in the past
+    //Check slot is not in the past
     if (isSlotInPast(date, timeSlot)) {
       return errorResponse(res, "This time slot has already passed", 400);
     }
 
-    // Check slot is not already booked
+    //Check slot is not already booked
     const slotTaken = await userService.isSlotTaken(doctorId, date, timeSlot);
     if (slotTaken) {
       return errorResponse(
@@ -98,7 +98,7 @@ export const bookAppointment = async (req, res) => {
       );
     }
 
-    // Get report file if uploaded
+    //Get report file if uploaded
     const reportFile = req.file ? req.file.path.replace(/\\/g, "/") : null;
 
     const appointment = await userService.createAppointment({
@@ -144,19 +144,19 @@ export const getMyAppointments = async (req, res) => {
   }
 };
 
-// ═══ CANCEL APPOINTMENT ═══
+//CANCEL APPOINTMENT
 export const cancelAppointment = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
 
-    // Check appointment exists and belongs to user
+    //Check appointment exists and belongs to user
     const appointment = await userService.getUserAppointmentById(id, userId);
     if (!appointment) {
       return notFoundResponse(res, "Appointment not found");
     }
 
-    // Can only cancel PENDING or CONFIRMED
+    //Can only cancel PENDING or CONFIRMED
     if (!["PENDING", "CONFIRMED"].includes(appointment.status)) {
       return errorResponse(
         res,
@@ -165,7 +165,7 @@ export const cancelAppointment = async (req, res) => {
       );
     }
 
-    // Check cancellation deadline
+    //Check cancellation deadline
     if (isCancellationTooLate(appointment.date, appointment.timeSlot)) {
       return errorResponse(
         res,

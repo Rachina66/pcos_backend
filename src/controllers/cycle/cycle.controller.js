@@ -4,7 +4,7 @@ import {
   errorResponse,
 } from "../../utils/apiResponse.utils.js";
 
-// ═══ LOG PERIOD ═══
+//LOG PERIOD
 export const logPeriod = async (req, res) => {
   try {
     const cycle = await cycleService.logPeriod(req.user.id, req.body);
@@ -14,7 +14,7 @@ export const logPeriod = async (req, res) => {
   }
 };
 
-// ═══ GET HISTORY ═══
+//GET HISTORY
 export const getCycleHistory = async (req, res) => {
   try {
     const cycles = await cycleService.getCycleHistory(req.user.id);

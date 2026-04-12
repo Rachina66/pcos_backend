@@ -4,7 +4,7 @@ import {
   register,
   login,
   profile,
-  registerDoctor, //check this
+  registerDoctor,
 } from "../../controllers/auth/auth.controller.js";
 import {
   registerSchema,
@@ -34,7 +34,5 @@ router.post(
   authorize(["ADMIN"]),
   registerDoctor,
 );
-
-
 
 export default router;

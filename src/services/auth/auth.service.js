@@ -3,43 +3,53 @@ import bcrypt from "bcrypt";
 import { generateToken } from "../../utils/jwt.utils.js";
 
 const SALT_ROUNDS = 10;
+const otpStore = new Map(); // for email verification OTPs
 
-// REGISTER
+//Register
 export const register = async ({ name, email, password, role }) => {
-  // Check if user already exists
   const existingUser = await prisma.user.findUnique({ where: { email } });
-  if (existingUser) {
-    throw new Error("Email already registered");
-  }
+  if (existingUser) throw new Error("Email already registered");
 
-  // Hash password
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
-  // Create user in DB
-  const user = await prisma.user.create({
+  //Create user as unverified
+  await prisma.user.create({
     data: {
       name,
       email,
       password: hashedPassword,
       role: role || "USER",
+      isVerified: false,
     },
   });
 
-  // Generate JWT token
-  const token = generateToken(user);
+  //Generate OTP for email verification
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  otpStore.set(email, { otp, expiresAt: Date.now() + 10 * 60 * 1000 });
 
-  return {
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-    },
-    token,
-  };
+  return { email, otp }; // otp returned so controller can email it
 };
 
-// LOGIN
+// VERIFY EMAIL
+export const verifyEmail = async (email, otp) => {
+  const record = otpStore.get(email);
+  if (!record) throw new Error("No OTP found. Please register again");
+  if (Date.now() > record.expiresAt) {
+    otpStore.delete(email);
+    throw new Error("OTP expired. Please register again");
+  }
+  if (record.otp !== otp) throw new Error("Invalid OTP");
+
+  await prisma.user.update({
+    where: { email },
+    data: { isVerified: true },
+  });
+
+  otpStore.delete(email);
+  return true;
+};
+
+//Login
 export const login = async ({ email, password }) => {
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) return null;
@@ -47,6 +57,9 @@ export const login = async ({ email, password }) => {
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) return null;
 
+  //Block unverified users
+  if (!user.isVerified) throw new Error("Please verify your email first"); // ← new
+
   const token = generateToken(user);
 
   return {
@@ -60,19 +73,17 @@ export const login = async ({ email, password }) => {
   };
 };
 
-// GET USER BY ID
+//GET USER BY ID
 export const getUserById = async (id) => {
   return prisma.user.findUnique({ where: { id } });
 };
 
-// Register doctor account
+//Register Doctor done by admin
 export const registerDoctor = async (doctorData) => {
   const { name, email, password } = doctorData;
 
   const existingUser = await prisma.user.findUnique({ where: { email } });
-  if (existingUser) {
-    throw new Error("Email already registered");
-  }
+  if (existingUser) throw new Error("Email already registered");
 
   const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -82,22 +93,14 @@ export const registerDoctor = async (doctorData) => {
       email,
       password: hashedPassword,
       role: "DOCTOR",
+      isVerified: true,         // ← doctors skip verification
     },
   });
 
-  const token = generateToken({
-    id: user.id,
-    email: user.email,
-    role: user.role,
-  });
+  const token = generateToken({ id: user.id, email: user.email, role: user.role });
 
   return {
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-    },
+    user: { id: user.id, name: user.name, email: user.email, role: user.role },
     token,
   };
 };

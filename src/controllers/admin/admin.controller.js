@@ -6,7 +6,7 @@ import {
 } from "../../utils/apiResponse.utils.js";
 import path from "path";
 
-// ═══ DASHBOARD ═══
+//Dashboard
 export const getDashboardStats = async (req, res) => {
   try {
     const stats = await adminService.getDashboardStats();
@@ -16,7 +16,7 @@ export const getDashboardStats = async (req, res) => {
   }
 };
 
-// ═══ USER MANAGEMENT ═══
+//User Management
 export const getAllUsers = async (req, res) => {
   try {
     const users = await adminService.getAllUsers();
@@ -26,7 +26,7 @@ export const getAllUsers = async (req, res) => {
   }
 };
 
-// ═══ DOCTOR MANAGEMENT ═══
+//Doctor Management
 export const getAllDoctors = async (req, res) => {
   try {
     const doctors = await adminService.getAllDoctorsAdmin();
@@ -149,7 +149,7 @@ export const deleteDoctor = async (req, res) => {
   }
 };
 
-// ═══ CONTENT MANAGEMENT ═══
+//Content Management
 export const getAllContent = async (req, res) => {
   try {
     const content = await adminService.getAllContentAdmin();
@@ -245,7 +245,7 @@ export const deleteContent = async (req, res) => {
   }
 };
 
-// ═══ APPOINTMENT MONITORING ═══
+//Appointment Monitoring 
 export const getAllAppointments = async (req, res) => {
   try {
     const appointments = await adminService.getAllAppointments();

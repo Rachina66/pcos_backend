@@ -337,7 +337,7 @@ export const updateAppointmentStatus = async (req, res) => {
   }
 };
 
-// ═══ ADD CONSULTATION NOTES ═══
+//Add Consultantaion Notes
 export const addConsultationNotes = async (req, res) => {
   try {
     const { consultationNotes, prescription, diagnosis } = req.body;
@@ -394,7 +394,7 @@ export const addConsultationNotes = async (req, res) => {
   }
 };
 
-// ═══ BULK CONFIRM ═══
+//BULK CONFIRM
 export const bulkConfirmAppointments = async (req, res) => {
   try {
     const { appointmentIds } = req.body;
@@ -426,7 +426,7 @@ export const bulkConfirmAppointments = async (req, res) => {
   }
 };
 
-// ═══ DOWNLOAD PATIENT REPORT ═══
+//DOWNLOAD PATIENT REPORT
 export const downloadPatientReport = async (req, res) => {
   try {
     const appointment = await doctorService.getAppointmentById(req.params.id);
@@ -454,7 +454,7 @@ export const downloadPatientReport = async (req, res) => {
   }
 };
 
-// ═══ PATIENT MANAGEMENT ═══
+//PATIENT MANAGEMENT
 export const getMyPatients = async (req, res) => {
   try {
     const doctorProfile = await getDoctorProfileOrError(res, req.user.email);

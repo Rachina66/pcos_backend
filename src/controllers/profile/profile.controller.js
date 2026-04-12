@@ -8,7 +8,7 @@ import {
   sendPasswordChangedEmail,
 } from "../../utils/otpEmail.utils.js";
 
-// ═══ UPDATE NAME ═══
+//Update Name
 export const updateName = async (req, res) => {
   try {
     const user = await profileService.updateName(req.user.id, req.body.name);
@@ -18,13 +18,17 @@ export const updateName = async (req, res) => {
   }
 };
 
-// ═══ CHANGE PASSWORD ═══
+//Change password
 export const changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
-    await profileService.changePassword(req.user.id, currentPassword, newPassword);
+    await profileService.changePassword(
+      req.user.id,
+      currentPassword,
+      newPassword,
+    );
 
-    // Send confirmation email (non-blocking)
+    //Send confirmation email (non-blocking)
     sendPasswordChangedEmail(req.user.email, req.user.name);
 
     return successResponse(res, null, "Password changed successfully");
@@ -33,18 +37,22 @@ export const changePassword = async (req, res) => {
   }
 };
 
-// ═══ CHANGE EMAIL ═══
+//CHANGE EMAIL
 export const changeEmail = async (req, res) => {
   try {
     const { newEmail, password } = req.body;
-    const user = await profileService.changeEmail(req.user.id, newEmail, password);
+    const user = await profileService.changeEmail(
+      req.user.id,
+      newEmail,
+      password,
+    );
     return successResponse(res, user, "Email updated successfully");
   } catch (error) {
     return errorResponse(res, error.message, 400);
   }
 };
 
-// ═══ FORGOT PASSWORD – Request OTP ═══
+//FORGOT PASSWORD – Request OTP
 export const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
@@ -59,7 +67,7 @@ export const forgotPassword = async (req, res) => {
   }
 };
 
-// ═══ FORGOT PASSWORD – Verify OTP ═══
+//FORGOT PASSWORD – Verify OTP
 export const verifyOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -70,7 +78,7 @@ export const verifyOtp = async (req, res) => {
   }
 };
 
-// ═══ FORGOT PASSWORD – Reset Password ═══
+//FORGOT PASSWORD – Reset Password
 export const resetPassword = async (req, res) => {
   try {
     const { email, newPassword } = req.body;

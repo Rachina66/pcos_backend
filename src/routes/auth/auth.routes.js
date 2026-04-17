@@ -5,6 +5,7 @@ import {
   login,
   profile,
   registerDoctor,
+  verifyEmail,
 } from "../../controllers/auth/auth.controller.js";
 import {
   registerSchema,
@@ -19,6 +20,7 @@ const router = express.Router();
 
 router.post("/register", validate({ body: registerSchema }), register);
 router.post("/login", validate({ body: loginSchema }), login);
+router.post("/verify-email", verifyEmail); // ← ADD (no auth needed)
 router.get("/profile", authenticate, profile);
 router.get(
   "/admin/dashboard",

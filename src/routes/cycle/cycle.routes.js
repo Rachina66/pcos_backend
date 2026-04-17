@@ -6,19 +6,16 @@ const router = express.Router();
 
 router.use(authenticate);
 
-//CYCLE LOGS
-router.post("/", cycleController.logPeriod);
-router.get("/", cycleController.getCycleHistory);
-router.get("/latest", cycleController.getLatestCycle);
-router.put("/:id", cycleController.updateCycleLog);
-router.delete("/:id", cycleController.deleteCycleLog);
+// Daily logging
+router.post("/log", cycleController.upsertDailyLog);
+router.get("/log/range", cycleController.getDailyLogsInRange);
+router.get("/log/:date", cycleController.getDailyLog);
 
-//PREDICTION
+// Cycles
+router.get("/history", cycleController.getCycleHistory);
 router.get("/prediction", cycleController.predictNextPeriod);
 
-//SYMPTOMS
-router.post("/symptoms", cycleController.logSymptoms);
-router.get("/symptoms/today", cycleController.getTodaySymptoms);
-router.get("/symptoms/insights", cycleController.getSymptomInsights);
+// Insights
+router.get("/insights", cycleController.getInsights);
 
 export default router;

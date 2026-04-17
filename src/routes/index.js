@@ -11,6 +11,7 @@ import adminRoutes from "./admin/admin.routes.js";
 import doctorRoutes from "./doctor/doctor.routes.js";
 import cycleRoutes from "./cycle/cycle.routes.js";
 import profileRoutes from "./profile/profile.routes.js";
+import mealRoutes from "./meal/meal.routes.js";
 const router = express.Router();
 
 // Health check route
@@ -47,5 +48,7 @@ router.use("/doctor", doctorRoutes);
 
 //cycle routes
 router.use("/user/cycles", cycleRoutes);
+
+router.use("/meal-plan", mealRoutes);
 
 export default router;

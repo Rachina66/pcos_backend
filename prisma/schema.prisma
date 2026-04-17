@@ -14,11 +14,11 @@ model User {
   role         Role          @default(USER)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
-  isVerified   Boolean  @default(false)
+  isVerified   Boolean       @default(false)
   predictions  Prediction[]
   appointments Appointment[]
-  cycleLogs    CycleLog[]   
-  symptomLogs  SymptomLog[]
+  cycleLogs    CycleLog[]
+  dailyLogs    DailyLog[]       // replaces symptomLogs
   mealPlans    MealPlan[]
 }
 
@@ -97,7 +97,7 @@ model Appointment {
   status     AppointmentStatus @default(PENDING)
   notes      String?
   
-  // ← ADD THESE 3 FIELDS
+  // 
   consultationNotes String?
   prescription      String?
   diagnosis         String?
@@ -143,27 +143,43 @@ model CycleLog {
   userId       String
   user         User     @relation(fields: [userId], references: [id])
   startDate    DateTime
-  endDate      DateTime?
-  periodLength Int?
-  symptoms     String[]
-  notes        String?
+  endDate      DateTime
+  periodLength Int
   createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
 
   @@index([userId])
 }
-
-model SymptomLog {
-  id        String   @id @default(uuid())
+model DailyLog {
+  id        String    @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  date      DateTime @default(now())
-  symptoms  String[]
-  createdAt DateTime @default(now())
+  user      User      @relation(fields: [userId], references: [id])
+  date      DateTime
 
+  isPeriod  Boolean   @default(false)
+  flow      FlowType?
+  mood      MoodType?
+  energy    Int?
+  symptoms  String[]
+  notes     String?
+
+  createdAt DateTime  @default(now())
+
+  @@unique([userId, date])
   @@index([userId])
 }
+enum FlowType {
+  LIGHT
+  MEDIUM
+  HEAVY
+}
 
+enum MoodType {
+  HAPPY
+  NEUTRAL
+  SAD
+  IRRITABLE
+  TIRED
+}
 model Meal {
   id           String       @id @default(uuid())
   name         String

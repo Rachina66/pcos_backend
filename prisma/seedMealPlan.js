@@ -168,7 +168,7 @@ async function getMealId(name, mealType, riskCategory) {
   });
   if (!meal) {
     console.warn(
-      `⚠️  Meal not found: "${name}" (${mealType}, ${riskCategory})`,
+      `Meal not found: "${name}" (${mealType}, ${riskCategory})`,
     );
     return null;
   }

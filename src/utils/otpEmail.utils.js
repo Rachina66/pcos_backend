@@ -11,7 +11,6 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-
 //Send email verification OTP
 export const sendVerificationEmail = async (userEmail, otp) => {
   try {
@@ -22,12 +21,12 @@ export const sendVerificationEmail = async (userEmail, otp) => {
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #B565A7;">Verify Your Email</h2>
-          <p>Welcome to PCOS Health App! Use the OTP below to verify your email:</p>
+          <p>Thank you for registering! Use the OTP below to verify your email:</p>
           <div style="background: #f9f0f7; padding: 24px; border-radius: 8px; margin: 16px 0; text-align: center;">
             <p style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #B565A7; margin: 0;">${otp}</p>
           </div>
           <p>This OTP is valid for <strong>10 minutes</strong>.</p>
-          <p style="color: #888;">If you did not create an account, please ignore this email.</p>
+          <p style="color: #888;">If you did not register, please ignore this email.</p>
           <p style="color: #B565A7;">PCOS Health App</p>
         </div>
       `,
@@ -39,7 +38,8 @@ export const sendVerificationEmail = async (userEmail, otp) => {
   }
 };
 
-// ═══ SEND OTP EMAIL ═══
+
+//SEND OTP EMAIL
 export const sendOtpEmail = async (userEmail, otp) => {
   try {
     await transporter.sendMail({

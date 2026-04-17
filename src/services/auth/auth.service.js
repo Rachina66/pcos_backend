@@ -5,32 +5,25 @@ import { generateToken } from "../../utils/jwt.utils.js";
 const SALT_ROUNDS = 10;
 const otpStore = new Map(); // for email verification OTPs
 
-//Register
+// Instead of creating user in DB:
+// Just store everything in otpStore
 export const register = async ({ name, email, password, role }) => {
   const existingUser = await prisma.user.findUnique({ where: { email } });
   if (existingUser) throw new Error("Email already registered");
 
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-  //Create user as unverified
-  await prisma.user.create({
-    data: {
-      name,
-      email,
-      password: hashedPassword,
-      role: role || "USER",
-      isVerified: false,
-    },
+  // store user data + otp together, no DB write yet
+  otpStore.set(email, {
+    otp,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+    userData: { name, email, password: hashedPassword, role: role || "USER" },
   });
 
-  //Generate OTP for email verification
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  otpStore.set(email, { otp, expiresAt: Date.now() + 10 * 60 * 1000 });
-
-  return { email, otp }; // otp returned so controller can email it
+  return { email, otp };
 };
 
-// VERIFY EMAIL
 export const verifyEmail = async (email, otp) => {
   const record = otpStore.get(email);
   if (!record) throw new Error("No OTP found. Please register again");
@@ -40,13 +33,18 @@ export const verifyEmail = async (email, otp) => {
   }
   if (record.otp !== otp) throw new Error("Invalid OTP");
 
-  await prisma.user.update({
-    where: { email },
-    data: { isVerified: true },
+  // NOW create user in DB, already verified
+  const user = await prisma.user.create({
+    data: { ...record.userData, isVerified: true },
   });
 
   otpStore.delete(email);
-  return true;
+
+  const token = generateToken(user);
+  return {
+    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    token,
+  };
 };
 
 //Login
@@ -93,11 +91,15 @@ export const registerDoctor = async (doctorData) => {
       email,
       password: hashedPassword,
       role: "DOCTOR",
-      isVerified: true,         // ← doctors skip verification
+      isVerified: true, // ← doctors skip verification
     },
   });
 
-  const token = generateToken({ id: user.id, email: user.email, role: user.role });
+  const token = generateToken({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+  });
 
   return {
     user: { id: user.id, name: user.name, email: user.email, role: user.role },

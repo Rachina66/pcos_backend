@@ -4,17 +4,33 @@ import {
   unauthorizedResponse,
 } from "../../utils/apiResponse.utils.js";
 import * as authService from "../../services/auth/auth.service.js";
-
-//Register new user
+import { sendVerificationEmail } from "../../utils/otpEmail.utils.js";
 export const register = async (req, res) => {
   try {
     const result = await authService.register(req.body);
-    return successResponse(res, result, "Registration successful", 201);
+    console.log("Register result:", result); // ← ADD
+    await sendVerificationEmail(result.email, result.otp);
+    console.log("Email sent successfully"); // ← ADD
+    return successResponse(
+      res,
+      { email: result.email },
+      "Registration successful. Check your email for OTP.",
+      201,
+    );
+  } catch (error) {
+    console.error("Register error:", error); // ← ADD
+    return errorResponse(res, error.message, 400);
+  }
+};
+export const verifyEmail = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    const result = await authService.verifyEmail(email, otp); // ← get result
+    return successResponse(res, result, "Email verified successfully"); 
   } catch (error) {
     return errorResponse(res, error.message, 400);
   }
 };
-
 //Login existing user
 export const login = async (req, res) => {
   try {

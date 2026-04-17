@@ -11,7 +11,7 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// ═══ BOOKING CONFIRMATION TO USER ═══
+//Booking completion to user
 export const sendBookingConfirmation = async (userEmail, userName, details) => {
   try {
     await transporter.sendMail({
@@ -142,7 +142,7 @@ export const sendCancellationToDoctor = async (
   }
 };
 
-// ═══ APPOINTMENT COMPLETED TO USER ═══
+//Appointment completed to user
 export const sendAppointmentCompleted = async (
   userEmail,
   userName,

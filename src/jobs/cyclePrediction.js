@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import { getUsersWithUpcomingPeriod } from "../services/cycle/cycle.service.js";
-import { sendPeriodReminder } from "../utils/periodEmail.utils.js"; 
+import { sendPeriodReminder } from "../utils/periodEmail.utils.js";
 
 export const startCyclePredictionJob = () => {
   cron.schedule("0 8 * * *", async () => {
@@ -8,7 +8,7 @@ export const startCyclePredictionJob = () => {
       console.log("Running cycle prediction job...");
       const users = await getUsersWithUpcomingPeriod();
       for (const user of users) {
-        await sendPeriodReminder(user.email, user.name, user.nextPeriodDate);
+        await sendPeriodReminder(user.email, user.name, user.nextPeriodStart);
       }
       console.log(`Period reminders sent to ${users.length} users`);
     } catch (error) {

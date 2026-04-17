@@ -1,44 +1,141 @@
 import prisma from "../../config/prismaclient.js";
 
-//LOG A PERIOD
-export const logPeriod = async (userId, data) => {
-  const { startDate, endDate, symptoms, notes } = data;
+const GRACE_GAP = 2;
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
-  if (!startDate) throw new Error("Start date is required");
+const toUTCMidnight = (date) => {
+  const d = new Date(date);
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+  );
+};
 
-  // Check for duplicate within 15 days of startDate
-  const recentCycle = await prisma.cycleLog.findFirst({
-    where: {
+const daysBetween = (a, b) => {
+  return Math.round((toUTCMidnight(b) - toUTCMidnight(a)) / MS_PER_DAY);
+};
+
+// ─── DAILY LOG ───────────────────────────────────────────────────────────────
+
+export const upsertDailyLog = async (userId, data) => {
+  const { date, isPeriod, flow, mood, energy, symptoms, notes } = data;
+  if (!date) throw new Error("Date is required");
+
+  const day = toUTCMidnight(date);
+
+  const log = await prisma.dailyLog.upsert({
+    where: { userId_date: { userId, date: day } },
+    update: {
+      isPeriod: isPeriod ?? false,
+      flow: flow ?? null,
+      mood: mood ?? null,
+      energy: energy ?? null,
+      symptoms: symptoms || [],
+      notes: notes ?? null,
+    },
+    create: {
       userId,
-      startDate: {
-        gte: new Date(new Date(startDate).getTime() - 15 * 24 * 60 * 60 * 1000),
-      },
+      date: day,
+      isPeriod: isPeriod ?? false,
+      flow: flow ?? null,
+      mood: mood ?? null,
+      energy: energy ?? null,
+      symptoms: symptoms || [],
+      notes: notes ?? null,
     },
   });
 
-  if (recentCycle) {
-    throw new Error("A cycle was already logged recently. Update it instead.");
-  }
+  await rebuildCycles(userId, day);
+  return log;
+};
 
-  const periodLength = endDate
-    ? Math.round(
-        (new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24),
-      ) + 1
-    : null;
-
-  return await prisma.cycleLog.create({
-    data: {
-      userId,
-      startDate: new Date(startDate),
-      endDate: endDate ? new Date(endDate) : null,
-      periodLength,
-      symptoms: symptoms || [],
-      notes: notes || null,
-    },
+export const getDailyLog = async (userId, date) => {
+  const day = toUTCMidnight(date);
+  return await prisma.dailyLog.findUnique({
+    where: { userId_date: { userId, date: day } },
   });
 };
 
-//GET CYCLE HISTORY
+export const getDailyLogsInRange = async (userId, from, to) => {
+  if (!from || !to) throw new Error("from and to dates are required");
+  return await prisma.dailyLog.findMany({
+    where: {
+      userId,
+      date: { gte: toUTCMidnight(from), lte: toUTCMidnight(to) },
+    },
+    orderBy: { date: "asc" },
+  });
+};
+
+// ─── CYCLE DETECTION ─────────────────────────────────────────────────────────
+
+const rebuildCycles = async (userId, changedDate) => {
+  const base = toUTCMidnight(changedDate);
+
+  const from = new Date(base);
+  from.setUTCDate(from.getUTCDate() - 10);
+
+  const to = new Date(base);
+  to.setUTCDate(to.getUTCDate() + 10);
+
+  const periodLogs = await prisma.dailyLog.findMany({
+    where: { userId, isPeriod: true, date: { gte: from, lte: to } },
+    orderBy: { date: "asc" },
+  });
+
+  const cycles = groupIntoCycles(periodLogs);
+
+  await prisma.cycleLog.deleteMany({
+    where: {
+      userId,
+      OR: [
+        { startDate: { gte: from, lte: to } },
+        { endDate: { gte: from, lte: to } },
+        { startDate: { lte: from }, endDate: { gte: to } },
+      ],
+    },
+  });
+
+  if (cycles.length === 0) return;
+
+  await prisma.cycleLog.createMany({
+    data: cycles.map((c) => ({
+      userId,
+      startDate: toUTCMidnight(c.startDate),
+      endDate: toUTCMidnight(c.endDate),
+      periodLength: c.periodLength,
+    })),
+  });
+};
+
+const groupIntoCycles = (logs) => {
+  if (logs.length === 0) return [];
+
+  const cycles = [];
+  let current = [logs[0]];
+
+  for (let i = 1; i < logs.length; i++) {
+    const gap = daysBetween(logs[i - 1].date, logs[i].date);
+    if (gap <= GRACE_GAP) {
+      current.push(logs[i]);
+    } else {
+      cycles.push(buildCycle(current));
+      current = [logs[i]];
+    }
+  }
+
+  cycles.push(buildCycle(current));
+  return cycles;
+};
+
+const buildCycle = (logs) => {
+  const startDate = toUTCMidnight(logs[0].date);
+  const endDate = toUTCMidnight(logs[logs.length - 1].date);
+  const periodLength = daysBetween(startDate, endDate) + 1;
+  return { startDate, endDate, periodLength };
+};
+
+// ─── CYCLE HISTORY ────────────────────────────────────────────────────────────
+
 export const getCycleHistory = async (userId) => {
   return await prisma.cycleLog.findMany({
     where: { userId },
@@ -46,54 +143,8 @@ export const getCycleHistory = async (userId) => {
   });
 };
 
-//GET LATEST CYCLE
-export const getLatestCycle = async (userId) => {
-  return await prisma.cycleLog.findFirst({
-    where: { userId },
-    orderBy: { startDate: "desc" },
-  });
-};
+// ─── PREDICTION ───────────────────────────────────────────────────────────────
 
-//UPDATE CYCLE LOG
-export const updateCycleLog = async (id, userId, data) => {
-  const cycle = await prisma.cycleLog.findFirst({
-    where: { id, userId },
-  });
-
-  if (!cycle) throw new Error("Cycle log not found");
-
-  const { startDate, endDate, symptoms, notes } = data;
-
-  const start = startDate ? new Date(startDate) : cycle.startDate;
-  const end = endDate ? new Date(endDate) : cycle.endDate;
-
-  const periodLength =
-    start && end
-      ? Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1
-      : cycle.periodLength;
-
-  return await prisma.cycleLog.update({
-    where: { id },
-    data: {
-      startDate: start,
-      endDate: end,
-      periodLength,
-      symptoms: symptoms || cycle.symptoms,
-      notes: notes !== undefined ? notes : cycle.notes,
-    },
-  });
-};
-
-//DELETE CYCLE LOG
-export const deleteCycleLog = async (id, userId) => {
-  const cycle = await prisma.cycleLog.findFirst({
-    where: { id, userId },
-  });
-  if (!cycle) throw new Error("Cycle log not found");
-  return await prisma.cycleLog.delete({ where: { id } });
-};
-
-//PREDICT NEXT PERIOD
 export const predictNextPeriod = async (userId) => {
   const cycles = await prisma.cycleLog.findMany({
     where: { userId },
@@ -104,140 +155,93 @@ export const predictNextPeriod = async (userId) => {
   if (cycles.length === 0) {
     return {
       predicted: false,
-      message:
-        "No cycle data available. Log your first period to get predictions.",
+      message: "No cycle data yet. Log your first period to get predictions.",
     };
   }
 
-  //Only 1 cycle — use default 28 days
-  if (cycles.length === 1) {
-    const nextDate = new Date(cycles[0].startDate);
-    nextDate.setDate(nextDate.getDate() + 28);
+  const today = toUTCMidnight(new Date());
+  const currentCycleDay = daysBetween(cycles[0].startDate, today) + 1;
 
-    const daysUntil = Math.round(
-      (nextDate - new Date()) / (1000 * 60 * 60 * 24),
+  if (cycles.length === 1) {
+    const nextPeriodStart = new Date(toUTCMidnight(cycles[0].startDate));
+    nextPeriodStart.setUTCDate(nextPeriodStart.getUTCDate() + 28);
+
+    const nextPeriodEnd = new Date(nextPeriodStart);
+    nextPeriodEnd.setUTCDate(
+      nextPeriodEnd.getUTCDate() + (cycles[0].periodLength - 1),
     );
 
-    const currentCycleDay =
-      Math.round(
-        (new Date() - new Date(cycles[0].startDate)) / (1000 * 60 * 60 * 24),
-      ) + 1;
+    const daysUntil = daysBetween(today, nextPeriodStart);
+    const status = getStatus(daysUntil);
 
     return {
       predicted: true,
-      nextPeriodDate: nextDate,
+      nextPeriodStart,
+      nextPeriodEnd,
       avgCycleLength: 28,
-      avgDuration: cycles[0].periodLength || null,
-      regularity: "Unknown",
+      avgPeriodLength: cycles[0].periodLength,
+      regularity: "unknown",
+      confidence: "low",
       daysUntil,
+      status,
       basedOn: 1,
-      lastPeriodDate: cycles[0].startDate,
       currentCycleDay,
-      note: "Based on default 28-day cycle. Log more cycles for accuracy.",
+      lastPeriodDate: cycles[0].startDate,
+      note: "Based on default 28-day cycle. Log more periods for accuracy.",
     };
   }
 
-  //Calculate gaps between cycle start dates
   const gaps = [];
   for (let i = 0; i < cycles.length - 1; i++) {
-    const gap = Math.round(
-      (new Date(cycles[i].startDate) - new Date(cycles[i + 1].startDate)) /
-        (1000 * 60 * 60 * 24),
-    );
-    gaps.push(gap);
+    gaps.push(daysBetween(cycles[i + 1].startDate, cycles[i].startDate));
   }
 
   const avgCycleLength = Math.round(
     gaps.reduce((a, b) => a + b, 0) / gaps.length,
   );
-
-  //Next period date
-  const nextPeriodDate = new Date(cycles[0].startDate);
-  nextPeriodDate.setDate(nextPeriodDate.getDate() + avgCycleLength);
-
-  const daysUntil = Math.round(
-    (nextPeriodDate - new Date()) / (1000 * 60 * 60 * 24),
+  const avgPeriodLength = Math.round(
+    cycles.reduce((a, c) => a + c.periodLength, 0) / cycles.length,
   );
 
-  //Avg period duration
-  const durations = cycles
-    .filter((c) => c.periodLength)
-    .map((c) => c.periodLength);
+  const nextPeriodStart = new Date(toUTCMidnight(cycles[0].startDate));
+  nextPeriodStart.setUTCDate(nextPeriodStart.getUTCDate() + avgCycleLength);
 
-  const avgDuration =
-    durations.length > 0
-      ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
-      : null;
+  const nextPeriodEnd = new Date(nextPeriodStart);
+  nextPeriodEnd.setUTCDate(nextPeriodEnd.getUTCDate() + (avgPeriodLength - 1));
 
-  //Regularity — variation in cycle lengths
-  const maxGap = Math.max(...gaps);
-  const minGap = Math.min(...gaps);
-  const variation = maxGap - minGap;
-  const regularity = variation <= 7 ? "Regular" : "Irregular";
-
-  //Current cycle day
-  const currentCycleDay =
-    Math.round(
-      (new Date() - new Date(cycles[0].startDate)) / (1000 * 60 * 60 * 24),
-    ) + 1;
+  const daysUntil = daysBetween(today, nextPeriodStart);
+  const variation = Math.max(...gaps) - Math.min(...gaps);
+  const regularity = variation <= 7 ? "regular" : "irregular";
+  const confidence =
+    cycles.length >= 4 ? "high" : cycles.length === 3 ? "medium" : "low";
+  const status = getStatus(daysUntil);
 
   return {
     predicted: true,
-    nextPeriodDate,
+    nextPeriodStart,
+    nextPeriodEnd,
     avgCycleLength,
-    avgDuration,
+    avgPeriodLength,
     regularity,
     variation,
+    confidence,
     daysUntil,
+    status,
     basedOn: gaps.length,
-    lastPeriodDate: cycles[0].startDate,
     currentCycleDay,
+    lastPeriodDate: cycles[0].startDate,
   };
 };
 
-//LOG TODAY'S SYMPTOMS
-export const logSymptoms = async (userId, symptoms) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  const existing = await prisma.symptomLog.findFirst({
-    where: {
-      userId,
-      date: { gte: today, lt: tomorrow },
-    },
-  });
-
-  if (existing) {
-    return await prisma.symptomLog.update({
-      where: { id: existing.id },
-      data: { symptoms },
-    });
-  }
-
-  return await prisma.symptomLog.create({
-    data: { userId, symptoms },
-  });
+const getStatus = (daysUntil) => {
+  if (daysUntil > 3) return "upcoming";
+  if (daysUntil >= -7) return "due";
+  return "late";
 };
 
-//GET TODAY'S SYMPTOMS
-export const getTodaySymptoms = async (userId) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+// ─── INSIGHTS ─────────────────────────────────────────────────────────────────
 
-  return await prisma.symptomLog.findFirst({
-    where: {
-      userId,
-      date: { gte: today, lt: tomorrow },
-    },
-  });
-};
-
-//SYMPTOM INSIGHTS
-export const getSymptomInsights = async (userId) => {
+export const getInsights = async (userId) => {
   const cycles = await prisma.cycleLog.findMany({
     where: { userId },
     orderBy: { startDate: "desc" },
@@ -247,90 +251,87 @@ export const getSymptomInsights = async (userId) => {
   if (cycles.length < 2) {
     return {
       hasInsights: false,
-      message: "Log at least 2 cycles to see symptom insights",
+      message: "Log at least 2 cycles to see insights.",
     };
   }
 
-  //Get all unique symptoms across all cycles
-  const allSymptoms = [...new Set(cycles.flatMap((c) => c.symptoms))];
+  const oldest = toUTCMidnight(cycles[cycles.length - 1].startDate);
+  const newest = toUTCMidnight(cycles[0].endDate);
 
-  if (allSymptoms.length === 0) {
-    return {
-      hasInsights: false,
-      message: "No symptoms logged yet",
-    };
-  }
-
-  const insights = allSymptoms.map((symptom) => {
-    //Presence per cycle oldest → newest
-    const presence = cycles
-      .slice()
-      .reverse()
-      .map((c) => c.symptoms.includes(symptom));
-
-    const totalOccurrences = presence.filter(Boolean).length;
-    const frequency = Math.round((totalOccurrences / cycles.length) * 100);
-
-    //Trend — compare older half vs newer half
-    const mid = Math.floor(presence.length / 2);
-    const olderHalf = presence.slice(0, mid).filter(Boolean).length;
-    const newerHalf = presence.slice(mid).filter(Boolean).length;
-
-    let trend;
-    if (newerHalf < olderHalf) trend = "improving";
-    else if (newerHalf > olderHalf) trend = "worsening";
-    else trend = "consistent";
-
-    return {
-      symptom,
-      trend,
-      frequency,
-      totalOccurrences,
-      cyclesTracked: cycles.length,
-      presence,
-    };
+  const allLogs = await prisma.dailyLog.findMany({
+    where: { userId, date: { gte: oldest, lte: newest } },
+    orderBy: { date: "asc" },
   });
 
-  //Sort by frequency descending
-  insights.sort((a, b) => b.frequency - a.frequency);
+  const periodLogs = allLogs.filter((l) => l.isPeriod);
+  const nonPeriodLogs = allLogs.filter((l) => !l.isPeriod);
+
+  const symptomCounts = {};
+  allLogs.forEach((log) => {
+    log.symptoms.forEach((s) => {
+      symptomCounts[s] = (symptomCounts[s] || 0) + 1;
+    });
+  });
+
+  const topSymptoms = Object.entries(symptomCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([symptom, count]) => ({
+      symptom,
+      count,
+      frequency: Math.round((count / allLogs.length) * 100),
+    }));
+
+  const moodMap = { HAPPY: 5, NEUTRAL: 3, SAD: 2, IRRITABLE: 1, TIRED: 2 };
+
+  const avgMood = (logs) => {
+    const scored = logs.filter((l) => l.mood).map((l) => moodMap[l.mood]);
+    return scored.length
+      ? Math.round(scored.reduce((a, b) => a + b, 0) / scored.length)
+      : null;
+  };
+
+  const avgEnergy = (logs) => {
+    const scored = logs.filter((l) => l.energy).map((l) => l.energy);
+    return scored.length
+      ? Math.round(scored.reduce((a, b) => a + b, 0) / scored.length)
+      : null;
+  };
 
   return {
     hasInsights: true,
     cyclesAnalyzed: cycles.length,
-    improving: insights.filter((i) => i.trend === "improving"),
-    worsening: insights.filter((i) => i.trend === "worsening"),
-    consistent: insights.filter((i) => i.trend === "consistent"),
-    mostCommon: insights.slice(0, 3).map((i) => i.symptom),
-    all: insights,
+    topSymptoms,
+    mood: {
+      duringPeriod: avgMood(periodLogs),
+      outsidePeriod: avgMood(nonPeriodLogs),
+    },
+    energy: {
+      duringPeriod: avgEnergy(periodLogs),
+      outsidePeriod: avgEnergy(nonPeriodLogs),
+    },
   };
 };
 
-//FOR CRON JOB
+// ─── CRON HELPER ──────────────────────────────────────────────────────────────
+
 export const getUsersWithUpcomingPeriod = async () => {
   const users = await prisma.user.findMany({
     where: { role: "USER" },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-    },
+    select: { id: true, name: true, email: true },
   });
 
   const results = [];
-
   for (const user of users) {
     const prediction = await predictNextPeriod(user.id);
-
     if (!prediction.predicted) continue;
     if (prediction.daysUntil !== 3) continue;
-
     results.push({
       userId: user.id,
       email: user.email,
       name: user.name,
-      nextPeriodDate: prediction.nextPeriodDate,
+      nextPeriodStart: prediction.nextPeriodStart,
     });
   }
-
   return results;
 };

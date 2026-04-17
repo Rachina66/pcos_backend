@@ -11,7 +11,10 @@ const app = express();
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: [
+      "http://localhost:5173",
+      "https://self-plaza-calibrate.ngrok-free.dev",
+    ],
     credentials: true,
   }),
 );

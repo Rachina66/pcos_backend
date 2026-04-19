@@ -114,6 +114,7 @@ export const getDoctorAppointments = async (doctorId, filters = {}) => {
       user: {
         select: { id: true, name: true, email: true },
       },
+      prediction: true,
     },
     orderBy: { date: "asc" },
   });
@@ -134,6 +135,7 @@ export const getTodayAppointments = async (doctorId) => {
       user: {
         select: { id: true, name: true, email: true },
       },
+      prediction: true,
     },
     orderBy: { timeSlot: "asc" },
   });
@@ -154,6 +156,7 @@ export const getUpcomingAppointments = async (doctorId) => {
       user: {
         select: { id: true, name: true, email: true },
       },
+      prediction: true,
     },
     orderBy: { date: "asc" },
   });
@@ -171,6 +174,7 @@ export const getPastAppointments = async (doctorId) => {
       user: {
         select: { id: true, name: true, email: true },
       },
+      prediction: true,
     },
     orderBy: { date: "desc" },
   });
@@ -183,6 +187,7 @@ export const getAppointmentById = async (id) => {
       user: {
         select: { id: true, name: true, email: true },
       },
+      prediction: true,
     },
   });
 };
@@ -194,6 +199,7 @@ export const updateAppointmentStatus = async (id, status, notes) => {
       user: {
         select: { id: true, name: true, email: true },
       },
+      prediction: true,
     },
   });
 };
@@ -210,6 +216,7 @@ export const addConsultationNotes = async (id, data) => {
       user: {
         select: { id: true, name: true, email: true },
       },
+      prediction: true,
     },
   });
 };
@@ -234,6 +241,7 @@ export const getDoctorPatients = async (doctorId) => {
       user: {
         select: { id: true, name: true, email: true, createdAt: true },
       },
+      prediction: true,
     },
     orderBy: { createdAt: "desc" },
   });
@@ -288,6 +296,7 @@ export const getPatientById = async (doctorId, userId) => {
 export const getPatientAppointments = async (doctorId, userId) => {
   return await prisma.appointment.findMany({
     where: { doctorId, userId },
+    include: { prediction: true },
     orderBy: { date: "desc" },
   });
 };

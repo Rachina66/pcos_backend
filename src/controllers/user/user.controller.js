@@ -66,7 +66,7 @@ export const getMyPredictions = async (req, res) => {
 //APPOINTMENTS
 export const bookAppointment = async (req, res) => {
   try {
-    const { doctorId, date, timeSlot, reason } = req.body;
+    const { doctorId, date, timeSlot, reason, predictionId } = req.body;
     const userId = req.user.id;
 
     if (!doctorId || !date || !timeSlot) {
@@ -98,6 +98,14 @@ export const bookAppointment = async (req, res) => {
       );
     }
 
+    // Validate predictionId belongs to this user if provided
+    if (predictionId) {
+      const prediction = await userService.getPredictionById(predictionId);
+      if (!prediction || prediction.userId !== userId) {
+        return errorResponse(res, "Invalid prediction", 400);
+      }
+    }
+
     //Get report file if uploaded
     const reportFile = req.file ? req.file.path.replace(/\\/g, "/") : null;
 
@@ -108,6 +116,7 @@ export const bookAppointment = async (req, res) => {
       timeSlot,
       reason: reason || null,
       reportFile,
+      predictionId: predictionId || null,
     });
     sendBookingConfirmation(req.user.email, req.user.name, {
       doctorName: doctor.name,

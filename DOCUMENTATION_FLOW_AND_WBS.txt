@@ -1,0 +1,1294 @@
+================================================================================
+  PCOS HEALTH DETECTION & MANAGEMENT SYSTEM
+  FYP DOCUMENTATION: DIAGRAMS, WBS (SCRUM), AND TRELLO BOARD
+================================================================================
+
+PROJECT OVERVIEW
+----------------
+Name        : PCOS Health Detection & Management System
+Stack       : Node.js + Express (Backend), React (Web Dashboard), Flutter (Mobile)
+Database    : PostgreSQL via Prisma ORM
+ML          : Python prediction model (spawned as subprocess)
+Auth        : JWT-based (7-day expiry), bcrypt password hashing
+Email       : Nodemailer via Gmail SMTP
+
+ROLES:
+  - USER   : Patient using the mobile app (registers, gets predicted, tracks cycle, books appointments)
+  - DOCTOR : Clinician managing appointments via React dashboard
+  - ADMIN  : System administrator managing doctors, content, users via React dashboard
+
+CORE FEATURES (DIAGRAMS WILL BE WRITTEN FOR EACH):
+  1. User Registration & Email Verification
+  2. Login & JWT Authentication
+  3. PCOS Risk Prediction (ML)
+  4. Meal Plan Generation
+  5. Appointment Booking (User)
+  6. Appointment Management (Doctor)
+  7. Cycle Tracking & Period Prediction
+  8. Admin Management (Doctors + Content + Users)
+  9. Password Reset via OTP
+  10. Doctor Availability & Profile Management
+
+================================================================================
+SECTION 1: SEQUENCE DIAGRAMS
+================================================================================
+
+Each sequence diagram description lists ACTORS, OBJECTS/SYSTEMS, and the
+step-by-step message flow with return values. Write exactly in this form when
+generating Mermaid sequenceDiagram code.
+
+--------------------------------------------------------------------------------
+SEQUENCE DIAGRAM 1: USER REGISTRATION & EMAIL VERIFICATION
+--------------------------------------------------------------------------------
+
+ACTORS / PARTICIPANTS:
+  - User (Mobile Client)
+  - AuthController (src/controllers/auth/auth.controller.js :: register)
+  - AuthService (src/services/auth/auth.service.js :: register)
+  - OtpStore (in-memory Map, keyed by email)
+  - EmailUtil (src/utils/otpEmail.utils.js :: sendVerificationEmail)
+  - AuthService :: verifyEmail
+  - PrismaDB (PostgreSQL via Prisma)
+  - JWTUtil (src/utils/jwt.utils.js :: generateToken)
+
+FLOW:
+  Step 1  : User -> AuthController         : POST /api/auth/register { name, email, password, role }
+  Step 2  : AuthController -> Zod Validator : validate(registerSchema, body)
+  Step 3  : Zod Validator -> AuthController : validation OK
+  Step 4  : AuthController -> AuthService  : register(name, email, password, role)
+  Step 5  : AuthService checks            : email already in OtpStore? -> if yes, delete old entry
+  Step 6  : AuthService -> bcrypt          : hashPassword(password, salt=10)
+  Step 7  : bcrypt -> AuthService          : hashedPassword
+  Step 8  : AuthService generates         : OTP = 6-digit random number, expiry = Date.now() + 10 minutes
+  Step 9  : AuthService -> OtpStore        : set(email, { name, hashedPassword, role, otp, expiry })
+  Step 10 : AuthService -> EmailUtil       : sendVerificationEmail(email, otp)
+  Step 11 : EmailUtil -> Gmail SMTP        : send HTML email with OTP code
+  Step 12 : Gmail SMTP -> EmailUtil        : email sent acknowledgement
+  Step 13 : AuthService -> AuthController  : return { message: "OTP sent to email" }
+  Step 14 : AuthController -> User         : 200 OK { message: "Verification email sent" }
+
+  --- User reads email and submits OTP ---
+
+  Step 15 : User -> AuthController         : POST /api/auth/verify-email { email, otp }
+  Step 16 : AuthController -> AuthService  : verifyEmail(email, otp)
+  Step 17 : AuthService -> OtpStore        : get(email) -> retrieve pending data
+  Step 18 : AuthService checks            : OtpStore entry exists? -> if not, throw "Invalid or expired OTP"
+  Step 19 : AuthService checks            : Date.now() > expiry? -> if yes, delete entry, throw "OTP expired"
+  Step 20 : AuthService checks            : storedOtp !== otp? -> throw "Invalid OTP"
+  Step 21 : AuthService -> PrismaDB        : prisma.user.create({ name, email, hashedPassword, role, isVerified: true })
+  Step 22 : PrismaDB -> AuthService        : created user object (with id)
+  Step 23 : AuthService -> OtpStore        : delete(email) -- clean up
+  Step 24 : AuthService -> JWTUtil         : generateToken({ id, email, role })
+  Step 25 : JWTUtil -> AuthService         : JWT token (7-day expiry)
+  Step 26 : AuthService -> AuthController  : return { user, token }
+  Step 27 : AuthController -> User         : 201 Created { user: { id, name, email, role }, token }
+
+KEY NOTES FOR DIAGRAM:
+  - OtpStore is in-memory (not DB). If server restarts, all pending registrations are lost.
+  - User is only persisted to DB AFTER successful OTP verification.
+  - Role can be USER (default) or DOCTOR. Admin is not self-registerable.
+  - The same OtpStore is used for both registration OTP and password-reset OTP (different keys/flows).
+
+--------------------------------------------------------------------------------
+SEQUENCE DIAGRAM 2: LOGIN & JWT AUTHENTICATION
+--------------------------------------------------------------------------------
+
+ACTORS / PARTICIPANTS:
+  - User (Mobile Client or React Dashboard)
+  - AuthController (:: login)
+  - AuthService (:: login)
+  - PrismaDB
+  - bcrypt
+  - JWTUtil
+
+FLOW:
+  Step 1  : User -> AuthController        : POST /api/auth/login { email, password }
+  Step 2  : AuthController -> Zod         : validate(loginSchema)
+  Step 3  : Zod -> AuthController         : validation OK
+  Step 4  : AuthController -> AuthService : login(email, password)
+  Step 5  : AuthService -> PrismaDB       : prisma.user.findUnique({ where: { email } })
+  Step 6  : PrismaDB -> AuthService       : user record OR null
+  Step 7  : AuthService checks           : user null? -> throw "Invalid credentials"
+  Step 8  : AuthService checks           : user.isVerified === false? -> throw "Please verify your email first"
+  Step 9  : AuthService -> bcrypt         : compare(password, user.password)
+  Step 10 : bcrypt -> AuthService         : true / false
+  Step 11 : AuthService checks           : false? -> throw "Invalid credentials"
+  Step 12 : AuthService -> JWTUtil        : generateToken({ id: user.id, email, role: user.role })
+  Step 13 : JWTUtil -> AuthService        : JWT token
+  Step 14 : AuthService -> AuthController : return { user, token }
+  Step 15 : AuthController -> User        : 200 OK { user: { id, name, email, role }, token }
+
+  --- Subsequent Authenticated Requests ---
+
+  Step 16 : User -> AuthenticateMiddleware : Request with header Authorization: "Bearer <token>"
+  Step 17 : AuthenticateMiddleware -> JWTUtil : verifyToken(token)
+  Step 18 : JWTUtil -> Middleware          : decoded payload { id, email, role }
+  Step 19 : Middleware -> PrismaDB         : prisma.user.findUnique({ where: { id: decoded.id } })
+  Step 20 : PrismaDB -> Middleware         : user record
+  Step 21 : Middleware                    : req.user = user
+  Step 22 : Middleware -> Controller       : next() -- request proceeds to controller
+
+KEY NOTES:
+  - Token is stored client-side (localStorage in React, secure storage in Flutter).
+  - All protected routes pass through AuthenticateMiddleware before hitting controllers.
+  - Role-based access: authorize(['ADMIN']) middleware checks req.user.role after authenticate.
+
+--------------------------------------------------------------------------------
+SEQUENCE DIAGRAM 3: PCOS RISK PREDICTION (ML INTEGRATION)
+--------------------------------------------------------------------------------
+
+ACTORS / PARTICIPANTS:
+  - User (Mobile App)
+  - AuthenticateMiddleware
+  - PredictionController (src/routes/prediction.routes.js -- inline controller logic)
+  - PrismaDB
+  - PythonProcess (spawned child process running predict.py)
+  - MLModel (RandomForest or similar, loaded in predict.py)
+
+FLOW:
+  Step 1  : User -> API                    : POST /api/prediction/predict
+                                             Headers: Authorization: Bearer <token>
+                                             Body: { data: { age, weight, height, bmi, bloodGroup,
+                                                    cycleLengthDays, periodLengthDays, regularOvulation,
+                                                    fshLevel, lhLevel, androgenLevel, cystCount,
+                                                    hirsutism, fastingGlucose, activityLevel,
+                                                    stressLevel, pregnant } }
+  Step 2  : API -> AuthenticateMiddleware  : validate JWT, attach req.user
+  Step 3  : AuthMiddleware -> Controller   : next()
+  Step 4  : Controller                    : validate input field ranges
+  Step 5  : Controller                    : transform input to Python field name format (snake_case mapping)
+  Step 6  : Controller -> PythonProcess    : spawn('python', ['predict.py'])
+                                             write JSON input to stdin
+  Step 7  : PythonProcess -> MLModel       : load trained model, run predict(input_features)
+  Step 8  : MLModel -> PythonProcess       : { prediction: 0|1, probability: float, confidence: float }
+  Step 9  : PythonProcess -> Controller    : stdout JSON { prediction, probability, confidence }
+  Step 10 : Controller                    : determine riskLevel:
+                                             probability >= 0.7 -> "High"
+                                             probability >= 0.4 -> "Moderate"
+                                             else              -> "Low"
+  Step 11 : Controller -> PrismaDB         : prisma.prediction.create({
+                                             userId, all input fields, prediction, probability,
+                                             riskLevel, confidence })
+  Step 12 : PrismaDB -> Controller         : saved prediction record (with id)
+  Step 13 : Controller -> User             : 200 OK {
+                                             predictionId,
+                                             prediction: 0|1,
+                                             probability,
+                                             riskLevel: "High"|"Moderate"|"Low",
+                                             confidence }
+
+KEY NOTES:
+  - Python process is spawned synchronously per request (not a persistent service).
+  - The predictionId is critical -- it is passed to the meal plan generation endpoint.
+  - riskLevel maps to meal plan categories: High->HIGH_RISK, Low->LOW_RISK, Moderate->GENERAL.
+  - Input fields are validated for plausible ranges before being sent to Python.
+
+--------------------------------------------------------------------------------
+SEQUENCE DIAGRAM 4: MEAL PLAN GENERATION
+--------------------------------------------------------------------------------
+
+ACTORS / PARTICIPANTS:
+  - User (Mobile App)
+  - AuthenticateMiddleware
+  - MealController (src/controllers/meal/meal.controller.js :: generatePlan)
+  - PrismaDB
+  - MealPlanRuleEngine (src/rules/mealPlanRuleEngine.js :: runMealPlanRules)
+  - MealService (src/services/meal/meal.service.js :: generateMealPlan)
+
+FLOW:
+  Step 1  : User -> API                    : POST /api/meal-plan/generate
+                                             Body: { predictionId, dietPreference: "VEG"|"NON_VEG"|"VEGAN" }
+  Step 2  : API -> AuthenticateMiddleware  : validate JWT
+  Step 3  : AuthMiddleware -> MealController : next()
+  Step 4  : MealController -> PrismaDB     : prisma.prediction.findUnique({ where: { id: predictionId } })
+                                             (verify prediction belongs to req.user.id)
+  Step 5  : PrismaDB -> MealController     : prediction record { riskLevel: "High"|"Moderate"|"Low" }
+  Step 6  : MealController -> RuleEngine   : runMealPlanRules({ riskLevel, dietPreference })
+  Step 7  : RuleEngine                    : mapRiskToCategory(riskLevel):
+                                             "High"     -> "HIGH_RISK"
+                                             "Low"      -> "LOW_RISK"
+                                             else       -> "GENERAL"
+  Step 8  : RuleEngine                    : getDietFilter(dietPreference):
+                                             "VEG"|"VEGAN" -> { isVeg: true }
+                                             "NON_VEG"     -> {} (no filter)
+  Step 9  : RuleEngine -> MealController   : return { riskCategory, dietFilter }
+  Step 10 : MealController -> MealService  : generateMealPlan(userId, riskCategory, dietFilter)
+  Step 11 : MealService -> PrismaDB        : delete existing active MealPlan for userId (if any)
+  Step 12 : MealService -> PrismaDB        : prisma.mealPlan.create({ userId, riskCategory, weekNumber:1, isActive:true })
+  Step 13 : PrismaDB -> MealService        : new mealPlan record (with id)
+  Step 14 : Loop for days 1 to 7:
+    Step 14a : For each mealType in [BREAKFAST, LUNCH, DINNER, SNACK]:
+    Step 14b : MealService -> PrismaDB     : prisma.meal.findMany({
+                                             where: { mealType, riskCategory, isActive:true, ...dietFilter }
+                                           })
+    Step 14c : PrismaDB -> MealService     : array of matching meals
+    Step 14d : MealService                : pickRandom(meals) -- picks one meal, tracks used IDs to avoid repetition
+  Step 15 : MealService -> PrismaDB        : prisma.mealPlanDay.create({
+                                             mealPlanId, dayNumber,
+                                             breakfastId, lunchId, dinnerId, snackId })
+             (repeat for all 7 days)
+  Step 16 : MealService -> PrismaDB        : prisma.mealPlan.findUnique({ include: days with all meal details })
+  Step 17 : PrismaDB -> MealService        : full hydrated meal plan
+  Step 18 : MealService -> MealController  : return full 7-day plan
+  Step 19 : MealController -> User         : 201 Created { mealPlan: { id, riskCategory, days: [...] } }
+
+KEY NOTES:
+  - If meal pool is smaller than 7 days, the system allows repetition after exhausting unique options.
+  - Regenerating a plan deletes the old one and creates a new randomized one with same riskCategory.
+  - Meal swap: User can replace a single meal on a specific day via PATCH /api/meal-plan/swap-meal.
+
+--------------------------------------------------------------------------------
+SEQUENCE DIAGRAM 5: APPOINTMENT BOOKING (USER SIDE)
+--------------------------------------------------------------------------------
+
+ACTORS / PARTICIPANTS:
+  - User (Mobile App)
+  - AuthenticateMiddleware
+  - UserController (src/controllers/user/user.controller.js :: bookAppointment)
+  - AppointmentUtils (src/utils/appointment.utils.js)
+  - UserService (src/services/user/user.service.js)
+  - UploadMiddleware (multer, src/middleware/upload.middleware.js)
+  - PrismaDB
+  - EmailUtil (src/utils/email.utils.js :: sendBookingConfirmation)
+
+FLOW:
+  Step 1  : User -> API                    : POST /api/user/appointments
+                                             Headers: Authorization: Bearer <token>
+                                             Content-Type: multipart/form-data
+                                             Body: { doctorId, date, timeSlot, reason, reportFile? }
+  Step 2  : API -> AuthenticateMiddleware  : validate JWT -> req.user
+  Step 3  : API -> UploadMiddleware        : multer.single('reportFile')
+                                             validate MIME type (PDF/JPG/PNG), max size 5MB
+                                             store to src/uploads/reports/<unique-filename>
+  Step 4  : UploadMiddleware -> Controller : req.file = { path, filename, ... } OR undefined
+  Step 5  : Controller -> PrismaDB         : prisma.doctor.findUnique({ where: { id: doctorId } })
+  Step 6  : PrismaDB -> Controller         : doctor record OR null
+  Step 7  : Controller checks             : doctor null? -> 404 "Doctor not found"
+  Step 8  : Controller -> AppointmentUtils : isSlotInPast(date, timeSlot)
+                                             checks: if date is today AND timeSlot time < Date.now() -> true
+  Step 9  : AppointmentUtils -> Controller : true -> 400 "Cannot book a slot in the past"
+                                             false -> continue
+  Step 10 : Controller -> UserService      : isSlotTaken(doctorId, date, timeSlot)
+  Step 11 : UserService -> PrismaDB        : prisma.appointment.findFirst({
+                                             where: { doctorId, date, timeSlot,
+                                                      status: { not: 'CANCELLED' } } })
+  Step 12 : PrismaDB -> UserService        : existing appointment OR null
+  Step 13 : UserService -> Controller      : true (taken) OR false (available)
+  Step 14 : Controller checks             : taken -> 409 "Time slot already booked"
+  Step 15 : Controller -> UserService      : createAppointment({
+                                             userId: req.user.id, doctorId, date, timeSlot,
+                                             reason, reportFile: req.file?.path,
+                                             status: 'PENDING' })
+  Step 16 : UserService -> PrismaDB        : prisma.appointment.create({ ... include: doctor })
+  Step 17 : PrismaDB -> UserService        : created appointment record
+  Step 18 : Controller -> EmailUtil        : sendBookingConfirmation(user.email, { doctorName, date, timeSlot, reason })
+  Step 19 : EmailUtil -> Gmail SMTP        : send confirmation email to patient
+  Step 20 : Controller -> User             : 201 Created { appointment: { id, doctorId, date, timeSlot, status: 'PENDING' } }
+
+KEY NOTES:
+  - Report file (PDF/image) is stored on disk, not in DB. The DB stores the file path.
+  - Slot availability is checked at booking time (race condition possible but acceptable for FYP scope).
+  - Cancellation: User can cancel up to 2 hours before the appointment time (enforced by isCancellationTooLate).
+  - Cancel flow: DELETE /api/user/appointments/:id -> check 2-hour deadline -> update status to CANCELLED -> email doctor.
+
+--------------------------------------------------------------------------------
+SEQUENCE DIAGRAM 6: APPOINTMENT MANAGEMENT (DOCTOR SIDE)
+--------------------------------------------------------------------------------
+
+ACTORS / PARTICIPANTS:
+  - Doctor (React Dashboard)
+  - AuthenticateMiddleware + authorize(['DOCTOR'])
+  - DoctorController (src/controllers/doctor/doctor.controller.js)
+  - DoctorService (src/services/doctor/doctor.service.js)
+  - PrismaDB
+  - EmailUtil (sendAppointmentConfirmed, sendAppointmentRejected, sendAppointmentCompleted)
+
+SUB-FLOW A: VIEW APPOINTMENTS
+  Step 1  : Doctor -> API                  : GET /api/doctor/appointments?status=PENDING&date=2025-06-01
+  Step 2  : Middleware                     : validate JWT, check role === DOCTOR
+  Step 3  : DoctorController -> DoctorService : getMyAppointments(doctorId, { status, date })
+  Step 4  : DoctorService -> PrismaDB      : prisma.appointment.findMany({
+                                             where: { doctorId, status?, date? },
+                                             include: { user: { select: { name, email } } }
+                                           })
+  Step 5  : PrismaDB -> DoctorService      : appointments array
+  Step 6  : DoctorController -> Doctor     : 200 OK { appointments: [...] }
+
+SUB-FLOW B: CONFIRM AN APPOINTMENT
+  Step 7  : Doctor -> API                  : PUT /api/doctor/appointments/:id
+                                             Body: { status: "CONFIRMED" }
+  Step 8  : Middleware                     : validate JWT, check DOCTOR role
+  Step 9  : DoctorController -> DoctorService : updateAppointmentStatus(appointmentId, doctorId, "CONFIRMED")
+  Step 10 : DoctorService -> PrismaDB      : prisma.appointment.findUnique({ where: { id, doctorId } })
+  Step 11 : PrismaDB -> DoctorService      : appointment { status: "PENDING" }
+  Step 12 : DoctorService checks          : status not PENDING? -> throw "Can only confirm PENDING appointments"
+  Step 13 : DoctorService -> PrismaDB      : prisma.appointment.update({ status: "CONFIRMED" })
+  Step 14 : PrismaDB -> DoctorService      : updated appointment (with user email)
+  Step 15 : DoctorController -> EmailUtil  : sendAppointmentConfirmed(patient.email, { doctorName, date, timeSlot })
+  Step 16 : EmailUtil -> Gmail SMTP        : email to patient
+  Step 17 : DoctorController -> Doctor     : 200 OK { appointment: { id, status: "CONFIRMED" } }
+
+SUB-FLOW C: ADD CONSULTATION NOTES (POST-APPOINTMENT)
+  Step 18 : Doctor -> API                  : PUT /api/doctor/appointments/:id/notes
+                                             Body: { consultationNotes, prescription, diagnosis }
+  Step 19 : DoctorController -> DoctorService : addConsultationNotes(appointmentId, doctorId, notes)
+  Step 20 : DoctorService -> PrismaDB      : prisma.appointment.update({
+                                             where: { id, doctorId },
+                                             data: { consultationNotes, prescription, diagnosis }
+                                           })
+  Step 21 : PrismaDB -> DoctorService      : updated record
+  Step 22 : DoctorController -> Doctor     : 200 OK { appointment }
+
+SUB-FLOW D: MARK AS COMPLETED
+  Step 23 : Doctor -> API                  : PUT /api/doctor/appointments/:id { status: "COMPLETED" }
+  Step 24 : DoctorService checks          : status must be CONFIRMED -> COMPLETED (not PENDING -> COMPLETED)
+  Step 25 : DoctorService -> PrismaDB      : update status to "COMPLETED"
+  Step 26 : DoctorController -> EmailUtil  : sendAppointmentCompleted(patient.email, { ... })
+  Step 27 : DoctorController -> Doctor     : 200 OK
+
+STATUS TRANSITION RULES (critical for diagram):
+  PENDING  -> CONFIRMED (doctor confirms)
+  PENDING  -> CANCELLED (doctor rejects OR user cancels)
+  CONFIRMED -> COMPLETED (doctor marks done after adding notes)
+  CONFIRMED -> CANCELLED (user cancels within 2-hour window)
+  COMPLETED -> (no further transitions)
+
+KEY NOTES:
+  - Doctor can view report file: GET /api/doctor/appointments/:id/report -> streams file from disk.
+  - Bulk confirm: PUT /api/doctor/appointments/bulk-confirm { appointmentIds: [] } -> same logic in loop.
+  - Cron job at midnight auto-cancels PENDING appointments whose date+time has passed.
+
+--------------------------------------------------------------------------------
+SEQUENCE DIAGRAM 7: CYCLE TRACKING & PERIOD PREDICTION
+--------------------------------------------------------------------------------
+
+ACTORS / PARTICIPANTS:
+  - User (Mobile App)
+  - AuthenticateMiddleware
+  - CycleController (src/controllers/cycle/cycle.controller.js)
+  - CycleService (src/services/cycle/cycle.service.js)
+  - PrismaDB
+  - CronJob (src/jobs/cyclePrediction.js)
+  - PeriodEmailUtil (src/utils/periodEmail.utils.js)
+
+SUB-FLOW A: LOG A DAILY SYMPTOM ENTRY
+  Step 1  : User -> API                    : POST /api/user/cycles/log
+                                             Body: { date: "2025-06-10", isPeriod: true,
+                                                     flow: "MEDIUM", mood: "NEUTRAL",
+                                                     energy: 3, symptoms: ["cramping","bloating"],
+                                                     notes: "mild cramps" }
+  Step 2  : Middleware                     : validate JWT -> req.user
+  Step 3  : CycleController -> CycleService : upsertDailyLog(userId, logData)
+  Step 4  : CycleService                  : normalize date to UTC midnight (new Date(date).setUTCHours(0,0,0,0))
+  Step 5  : CycleService -> PrismaDB       : prisma.dailyLog.upsert({
+                                             where: { userId_date: { userId, date } },
+                                             create: { ...logData, userId },
+                                             update: { ...logData }
+                                           })
+  Step 6  : PrismaDB -> CycleService       : upserted DailyLog record
+  Step 7  : CycleService                  : call rebuildCycles(userId, date)
+  Step 8  : rebuildCycles:
+    Step 8a : CycleService -> PrismaDB     : fetch all DailyLogs where isPeriod=true, userId=userId,
+                                             sorted by date ASC
+    Step 8b : CycleService                : groupIntoCycles(periodLogs):
+                                             -- initialize empty groups
+                                             -- iterate sorted logs
+                                             -- if gap between consecutive dates > 2 days -> new cycle group
+                                             -- else -> same cycle group
+    Step 8c : CycleService -> PrismaDB     : delete CycleLogs in the affected date window
+    Step 8d : Loop for each cycle group:
+              CycleService -> PrismaDB     : prisma.cycleLog.create({
+                                             userId,
+                                             startDate: group[0].date,
+                                             endDate: group[last].date,
+                                             periodLength: days between start and end
+                                           })
+  Step 9  : CycleService -> CycleController : return upserted DailyLog
+  Step 10 : CycleController -> User         : 200 OK { log }
+
+SUB-FLOW B: GET PERIOD PREDICTION
+  Step 11 : User -> API                    : GET /api/user/cycles/prediction
+  Step 12 : CycleController -> CycleService : predictNextPeriod(userId)
+  Step 13 : CycleService -> PrismaDB       : prisma.cycleLog.findMany({
+                                             where: { userId },
+                                             orderBy: { startDate: 'desc' },
+                                             take: 4
+                                           })
+  Step 14 : PrismaDB -> CycleService       : last 4 CycleLog records
+  Step 15 : CycleService checks           : 0 cycles? -> return { status: "no_data", message: "Log your first period" }
+  Step 16 : CycleService checks           : 1 cycle only? -> use default 28-day cycle length
+  Step 17 : CycleService (2+ cycles)      : calculate avg cycle length:
+                                             gaps = differences between consecutive startDates
+                                             avgCycleLength = sum(gaps) / gaps.length
+  Step 18 : CycleService                  : nextPeriodStart = lastCycle.startDate + avgCycleLength days
+                                             nextPeriodEnd   = nextPeriodStart + avgPeriodLength days
+                                             daysUntil       = nextPeriodStart - today
+  Step 19 : CycleService                  : determine confidence:
+                                             stdDev of gaps < 2 -> "high"
+                                             stdDev < 5         -> "medium"
+                                             else               -> "low"
+  Step 20 : CycleService -> CycleController : return { nextPeriodStart, nextPeriodEnd, daysUntil,
+                                                       avgCycleLength, confidence, regularity }
+  Step 21 : CycleController -> User         : 200 OK { prediction: { ... } }
+
+SUB-FLOW C: PERIOD REMINDER CRON JOB (AUTOMATED)
+  Step 22 : CronJob (daily 08:00 AM)      : fires cyclePrediction.js
+  Step 23 : CronJob -> CycleService        : getUsersWithPeriodIn3Days()
+  Step 24 : CycleService -> PrismaDB       : for each user with CycleLogs: run prediction logic
+                                             filter: daysUntil === 3
+  Step 25 : CycleService -> CronJob        : return array of { user, predictedDate }
+  Step 26 : CronJob -> PeriodEmailUtil     : sendPeriodReminder(user.email, { predictedDate }) for each user
+  Step 27 : PeriodEmailUtil -> Gmail SMTP  : send reminder email with tips
+
+KEY NOTES:
+  - The 2-day grace gap in groupIntoCycles handles minor logging gaps (user forgets one day).
+  - rebuildCycles is called on every daily log upsert, not just when isPeriod changes.
+  - Insights endpoint aggregates mood, energy, top symptoms across all cycles for the user.
+
+--------------------------------------------------------------------------------
+SEQUENCE DIAGRAM 8: PASSWORD RESET VIA OTP
+--------------------------------------------------------------------------------
+
+ACTORS / PARTICIPANTS:
+  - User (Mobile App)
+  - ProfileController (src/controllers/profile/profile.controller.js)
+  - ProfileService (src/services/profile/profile.service.js)
+  - PrismaDB
+  - OtpEmailUtil (src/utils/otpEmail.utils.js)
+
+FLOW:
+  Step 1  : User -> API                    : POST /api/profile/forgot-password { email }
+  Step 2  : ProfileController -> ProfileService : forgotPassword(email)
+  Step 3  : ProfileService -> PrismaDB     : prisma.user.findUnique({ where: { email } })
+  Step 4  : PrismaDB -> ProfileService     : user OR null
+  Step 5  : ProfileService                : if user null -> still return success (security: don't leak existence)
+  Step 6  : ProfileService                : generateOtp() = 6-digit random, expiry = now + 10 min
+  Step 7  : ProfileService -> PrismaDB     : prisma.user.update({ where: { email },
+                                             data: { resetOtp, resetOtpExpiry } })
+  Step 8  : ProfileService -> OtpEmailUtil : sendOtpEmail(email, otp)
+  Step 9  : OtpEmailUtil -> Gmail SMTP     : send password reset email
+  Step 10 : ProfileController -> User      : 200 OK { message: "OTP sent if email exists" }
+
+  Step 11 : User -> API                    : POST /api/profile/verify-otp { email, otp }
+  Step 12 : ProfileService -> PrismaDB     : find user by email
+  Step 13 : ProfileService checks         : resetOtp matches AND Date.now() < resetOtpExpiry
+  Step 14 : ProfileController -> User      : 200 OK { message: "OTP verified" } (or 400 on failure)
+
+  Step 15 : User -> API                    : POST /api/profile/reset-password { email, otp, newPassword }
+  Step 16 : ProfileService -> PrismaDB     : verify OTP again
+  Step 17 : ProfileService -> bcrypt       : hash(newPassword)
+  Step 18 : ProfileService -> PrismaDB     : update user.password = hashedPassword, clear resetOtp fields
+  Step 19 : ProfileService -> OtpEmailUtil : sendPasswordChangedEmail(email)
+  Step 20 : ProfileController -> User      : 200 OK { message: "Password reset successful" }
+
+KEY NOTES:
+  - OTP for password reset is stored in the User DB record (resetOtp, resetOtpExpiry columns).
+  - Different from registration OTP which is stored in memory (OtpStore).
+
+--------------------------------------------------------------------------------
+SEQUENCE DIAGRAM 9: ADMIN -- DOCTOR MANAGEMENT
+--------------------------------------------------------------------------------
+
+ACTORS / PARTICIPANTS:
+  - Admin (React Dashboard)
+  - AuthenticateMiddleware + authorize(['ADMIN'])
+  - AdminController (src/controllers/admin/admin.controller.js)
+  - AdminService (src/services/admin/admin.service.js)
+  - PrismaDB
+
+FLOW (CREATE DOCTOR):
+  Step 1  : Admin -> API                   : POST /api/admin/doctors
+                                             Body: { name, specialization, qualification, experience,
+                                                     hospital, location, phone, email, bio, imageUrl,
+                                                     availableDays, timeSlots, consultFee }
+  Step 2  : Middleware                     : JWT validation + ADMIN role check
+  Step 3  : AdminController -> AdminService : createDoctor(doctorData)
+  Step 4  : AdminService -> PrismaDB        : prisma.doctor.create({ ...doctorData, isActive: true })
+  Step 5  : PrismaDB -> AdminService        : created doctor record
+  Step 6  : AdminController -> Admin        : 201 Created { doctor }
+
+FLOW (VIEW DASHBOARD STATS):
+  Step 7  : Admin -> API                   : GET /api/admin/stats
+  Step 8  : AdminController -> AdminService : getDashboardStats()
+  Step 9  : AdminService -> PrismaDB       : prisma.$transaction([
+                                             prisma.user.count(),
+                                             prisma.doctor.count(),
+                                             prisma.prediction.count(),
+                                             prisma.prediction.count({ where: { riskLevel: 'High' } }),
+                                             prisma.appointment.count()
+                                           ])
+  Step 10 : PrismaDB -> AdminService       : [ totalUsers, totalDoctors, totalPredictions,
+                                              highRiskCount, totalAppointments ]
+  Step 11 : AdminController -> Admin       : 200 OK { stats: { ... } }
+
+KEY NOTES:
+  - Admin can also register a Doctor USER account: POST /api/auth/register-doctor
+    This creates a User with role=DOCTOR (separate from the Doctor profile record).
+  - Doctor profile (Doctor model) and Doctor auth account (User model with role=DOCTOR) are separate.
+  - Admin content management: same CRUD pattern as doctor management.
+
+================================================================================
+SECTION 2: ACTIVITY DIAGRAMS
+================================================================================
+
+For each activity diagram, the flow shows decision points, parallel activities,
+and the overall control flow from start to end.
+
+--------------------------------------------------------------------------------
+ACTIVITY DIAGRAM 1: USER REGISTRATION FLOW
+--------------------------------------------------------------------------------
+START
+  -> Fill registration form (name, email, password, role)
+  -> Submit form
+  -> [Zod Validation] --- FAIL --> Show validation errors -> [loop back to form]
+       | PASS
+       v
+  -> API: POST /register
+  -> Check if email already in OtpStore
+       | YES (previous unverified attempt)
+       v Delete old OTP entry, proceed
+  -> Hash password (bcrypt, salt=10)
+  -> Generate 6-digit OTP + 10-min expiry
+  -> Store in OtpStore (in-memory)
+  -> Send verification email (Nodemailer)
+       | Email fail -> log error (still return success to user)
+       v
+  -> Notify user: "Check your email for OTP"
+  -> User opens email, reads OTP
+  -> User submits OTP: POST /verify-email { email, otp }
+  -> Check OtpStore for email
+       | NOT FOUND --> Return "Invalid or expired OTP" -> END (user must re-register)
+       v FOUND
+  -> Check expiry: Date.now() > expiry?
+       | YES (expired) --> Delete entry, return "OTP expired" -> user must re-register
+       v NO
+  -> Compare OTP: stored !== submitted?
+       | YES (mismatch) --> Return "Invalid OTP"
+       v MATCHES
+  -> Create User in PostgreSQL (isVerified=true)
+  -> Delete OTP from OtpStore
+  -> Generate JWT token (7-day)
+  -> Return user + token
+  -> [Client] Store token in local/secure storage
+  -> Redirect to dashboard/home
+END
+
+--------------------------------------------------------------------------------
+ACTIVITY DIAGRAM 2: PCOS PREDICTION FLOW
+--------------------------------------------------------------------------------
+START
+  -> User navigates to "Check PCOS Risk" screen
+  -> Fill health data form (all required fields)
+  -> [Client-side validation] --- FAIL --> Show errors
+       | PASS
+       v
+  -> Send POST /api/prediction/predict
+  -> Server-side field range validation
+       | FAIL --> 400 Bad Request with field errors
+       v PASS
+  -> Transform fields to Python format
+  -> Spawn Python subprocess (predict.py)
+  -> Python: load trained ML model
+  -> Python: run predict() on input features
+  -> Python: write JSON result to stdout
+  -> Server: read stdout, parse result
+       | Python error (non-zero exit) --> 500 "Prediction failed"
+       v SUCCESS
+  -> Determine riskLevel from probability
+  -> Save Prediction record to PostgreSQL (all inputs + results)
+  -> Return prediction result to user
+  -> [UI] Show result: risk level, probability, confidence
+  -> [UI] Show CTA: "Generate My Meal Plan"
+END
+
+--------------------------------------------------------------------------------
+ACTIVITY DIAGRAM 3: MEAL PLAN GENERATION FLOW
+--------------------------------------------------------------------------------
+START
+  -> User views prediction result screen
+  -> User selects diet preference (VEG / NON_VEG / VEGAN)
+  -> User taps "Generate Meal Plan"
+  -> POST /api/meal-plan/generate { predictionId, dietPreference }
+  -> Verify predictionId belongs to user
+       | FAIL --> 403 Forbidden
+       v PASS
+  -> Rule Engine: map riskLevel -> riskCategory
+  -> Rule Engine: map dietPreference -> dietFilter
+  -> Check for existing active meal plan
+       | EXISTS --> Delete existing plan
+       v (or no existing plan)
+  -> Create new MealPlan record
+  -> [Loop: Day 1 to 7]
+      -> [Loop: BREAKFAST, LUNCH, DINNER, SNACK]
+          -> Query meals matching riskCategory + mealType + dietFilter
+          -> pickRandom() -- avoid repeats across week
+          -> Create MealPlanDay entry
+  -> Hydrate plan with full meal details
+  -> Return 7-day plan
+  -> [UI] Show weekly meal calendar
+  -> User can tap any meal to see ingredients/recipe
+  -> User can swap a meal: PATCH /api/meal-plan/swap-meal
+END
+
+--------------------------------------------------------------------------------
+ACTIVITY DIAGRAM 4: APPOINTMENT BOOKING FLOW
+--------------------------------------------------------------------------------
+START
+  -> User browses doctor list: GET /api/public/doctors
+  -> User selects a doctor -> views profile
+  -> User checks availability: GET /api/public/doctors/:id/available-slots?date=...
+  -> User selects an available time slot
+  -> User fills reason, optionally uploads report (PDF/JPG/PNG, max 5MB)
+  -> Submit: POST /api/user/appointments
+  -> [Upload Middleware] validate file type & size
+       | FAIL --> 400 error
+       v PASS (or no file)
+  -> Check doctor exists
+       | NOT FOUND --> 404
+       v FOUND
+  -> Check slot in past (isSlotInPast)
+       | YES --> 400 "Cannot book past slot"
+       v NO
+  -> Check slot taken (isSlotTaken)
+       | YES --> 409 "Slot already booked"
+       v NO
+  -> Create Appointment (status: PENDING)
+  -> Send booking confirmation email to user
+  -> Return appointment details
+  -> [UI] Show "Booking confirmed! Status: Pending"
+
+  [Later: User wants to cancel]
+  -> DELETE /api/user/appointments/:id
+  -> Check isCancellationTooLate (2-hour window)
+       | TOO LATE --> 400 "Cannot cancel within 2 hours"
+       v OK
+  -> Update status to CANCELLED
+  -> Send cancellation email to doctor
+END
+
+--------------------------------------------------------------------------------
+ACTIVITY DIAGRAM 5: CYCLE TRACKING FLOW
+--------------------------------------------------------------------------------
+START
+  -> User opens cycle calendar
+  -> User taps on a date
+  -> User fills: isPeriod, flow, mood, energy, symptoms, notes
+  -> POST /api/user/cycles/log
+  -> Service: upsertDailyLog (insert or update)
+  -> Service: normalize date to UTC midnight
+  -> [Trigger rebuildCycles]
+      -> Fetch all isPeriod=true logs for user
+      -> Sort by date ASC
+      -> groupIntoCycles (2-day grace gap between groups)
+      -> Delete old CycleLog entries in window
+      -> Re-create CycleLog records for each detected cycle
+  -> Return saved log
+  -> [UI] Update calendar display
+
+  [User requests next period prediction]
+  -> GET /api/user/cycles/prediction
+  -> Fetch last 4 cycles from DB
+  -> [0 cycles] -> "Log your first period to get predictions"
+  -> [1 cycle]  -> Use 28-day default
+  -> [2+ cycles] -> Calculate average cycle length from gaps
+  -> Compute nextPeriodStart, nextPeriodEnd, daysUntil, confidence
+  -> Return prediction
+  -> [UI] Show "Your next period is in X days"
+
+  [Cron: Daily 08:00 AM]
+  -> Find users where daysUntil === 3
+  -> Send period reminder emails
+END
+
+--------------------------------------------------------------------------------
+ACTIVITY DIAGRAM 6: DOCTOR APPOINTMENT MANAGEMENT FLOW
+--------------------------------------------------------------------------------
+START
+  -> Doctor logs into React Dashboard
+  -> Doctor navigates to Appointments
+  -> Fetch appointments: GET /api/doctor/appointments?status=PENDING
+  -> [For each appointment]
+      -> Doctor reviews patient details, reason, report
+      -> Doctor chooses action:
+         |-- CONFIRM --------> PUT status=CONFIRMED -> Email patient
+         |-- REJECT/CANCEL --> PUT status=CANCELLED -> Email patient
+
+  [Post-consultation]
+  -> Doctor opens completed appointment
+  -> Doctor adds notes: PUT /api/doctor/appointments/:id/notes
+       { consultationNotes, prescription, diagnosis }
+  -> Doctor marks as completed: PUT /api/doctor/appointments/:id { status: COMPLETED }
+       -> Enforce: must be CONFIRMED first
+       -> Email patient: "Your consultation is complete"
+
+  [Bulk Action]
+  -> Doctor selects multiple PENDING appointments
+  -> PUT /api/doctor/appointments/bulk-confirm { appointmentIds: [...] }
+  -> All become CONFIRMED, emails sent to each patient
+END
+
+================================================================================
+SECTION 3: COLLABORATION (COMMUNICATION) DIAGRAMS
+================================================================================
+
+Collaboration diagrams show objects and their links (relationships), with
+numbered messages showing the order of interaction.
+
+--------------------------------------------------------------------------------
+COLLABORATION DIAGRAM 1: USER REGISTRATION
+--------------------------------------------------------------------------------
+Objects and Links:
+  :User (Client)
+  :AuthController
+  :AuthService
+  :OtpStore (Memory)
+  :EmailUtil
+  :PrismaDB
+  :JWTUtil
+
+Links:
+  User          --1-->  AuthController   [POST /register body]
+  AuthController --2--> AuthService      [register(name,email,pw,role)]
+  AuthService   --3-->  OtpStore         [set(email, {data, otp, expiry})]
+  AuthService   --4-->  EmailUtil        [sendVerificationEmail(email,otp)]
+  User          --5-->  AuthController   [POST /verify-email {email,otp}]
+  AuthController --6--> AuthService      [verifyEmail(email,otp)]
+  AuthService   --7-->  OtpStore         [get(email)]
+  AuthService   --8-->  PrismaDB         [user.create({...})]
+  AuthService   --9-->  JWTUtil          [generateToken({id,email,role})]
+  AuthController --10-> User             [return {user, token}]
+
+--------------------------------------------------------------------------------
+COLLABORATION DIAGRAM 2: PCOS PREDICTION
+--------------------------------------------------------------------------------
+Objects and Links:
+  :User (Client)
+  :PredictionController
+  :PythonProcess (predict.py)
+  :MLModel (trained .pkl)
+  :PrismaDB
+
+Links:
+  User                 --1--> PredictionController  [POST /predict {health data}]
+  PredictionController --2--> PythonProcess          [spawn with stdin JSON]
+  PythonProcess        --3--> MLModel                [predict(features)]
+  MLModel              --4--> PythonProcess           [prediction, probability, confidence]
+  PythonProcess        --5--> PredictionController   [stdout JSON result]
+  PredictionController --6--> PrismaDB               [prediction.create({inputs, results})]
+  PredictionController --7--> User                   [return {predictionId, riskLevel, ...}]
+
+--------------------------------------------------------------------------------
+COLLABORATION DIAGRAM 3: APPOINTMENT LIFECYCLE
+--------------------------------------------------------------------------------
+Objects and Links:
+  :User (Patient)
+  :UserController
+  :UserService
+  :AppointmentUtils
+  :UploadMiddleware
+  :PrismaDB
+  :EmailUtil
+  :Doctor (React Dashboard)
+  :DoctorController
+  :DoctorService
+
+Links (booking phase):
+  User            --1-->   UserController    [POST /appointments multipart]
+  UserController  --2-->   UploadMiddleware  [validate & store file]
+  UserController  --3-->   AppointmentUtils  [isSlotInPast(date, timeSlot)]
+  UserController  --4-->   UserService       [isSlotTaken(doctorId, date, timeSlot)]
+  UserService     --4.1--> PrismaDB          [appointment.findFirst({doctorId,date,timeSlot})]
+  UserController  --5-->   UserService       [createAppointment({...})]
+  UserService     --5.1--> PrismaDB          [appointment.create({...})]
+  UserController  --6-->   EmailUtil         [sendBookingConfirmation(user.email)]
+
+Links (doctor confirm phase):
+  Doctor          --7-->   DoctorController  [PUT /appointments/:id {status:CONFIRMED}]
+  DoctorController --8-->  DoctorService     [updateAppointmentStatus(id,docId,CONFIRMED)]
+  DoctorService   --8.1--> PrismaDB          [appointment.update({status:CONFIRMED})]
+  DoctorController --9-->  EmailUtil         [sendAppointmentConfirmed(patient.email)]
+
+--------------------------------------------------------------------------------
+COLLABORATION DIAGRAM 4: CYCLE TRACKING & PREDICTION
+--------------------------------------------------------------------------------
+Objects and Links:
+  :User (Client)
+  :CycleController
+  :CycleService
+  :PrismaDB
+  :CronJob
+  :PeriodEmailUtil
+
+Links:
+  User            --1-->   CycleController   [POST /cycles/log {date, isPeriod, ...}]
+  CycleController --2-->   CycleService      [upsertDailyLog(userId, data)]
+  CycleService    --3-->   PrismaDB          [dailyLog.upsert({where:{userId_date}})]
+  CycleService    --4-->   CycleService      [rebuildCycles(userId, date)] (internal)
+  CycleService    --4.1--> PrismaDB          [dailyLog.findMany({isPeriod:true})]
+  CycleService    --4.2--> PrismaDB          [cycleLog.deleteMany({range})]
+  CycleService    --4.3--> PrismaDB          [cycleLog.create({startDate,endDate,periodLength})]
+  User            --5-->   CycleController   [GET /cycles/prediction]
+  CycleController --6-->   CycleService      [predictNextPeriod(userId)]
+  CycleService    --6.1--> PrismaDB          [cycleLog.findMany({take:4,orderBy:desc})]
+  CronJob         --7-->   CycleService      [getUsersWithPeriodIn3Days()]
+  CronJob         --8-->   PeriodEmailUtil   [sendPeriodReminder(email, {predictedDate})]
+
+================================================================================
+SECTION 4: WORK BREAKDOWN STRUCTURE (WBS) -- SCRUM METHODOLOGY
+================================================================================
+
+PROJECT: PCOS Health Detection & Management System
+METHODOLOGY: Scrum (Sprints of 2 weeks each)
+TOTAL ESTIMATED SPRINTS: 6
+
+SCRUM STRUCTURE OVERVIEW:
+  - Product Owner: FYP Student (Rachina)
+  - Scrum Master: FYP Supervisor (or student self-managed)
+  - Development Team: Solo developer
+
+PRODUCT BACKLOG (Epics -> User Stories -> Tasks):
+
+=============
+EPIC 1: AUTHENTICATION & USER MANAGEMENT
+=============
+  User Story 1.1: As a patient, I want to register with email verification so I can securely access the app.
+    Task 1.1.1: Design User schema (Prisma: id, name, email, password, role, isVerified)
+    Task 1.1.2: Implement POST /api/auth/register (OTP generation, in-memory store, bcrypt hashing)
+    Task 1.1.3: Implement POST /api/auth/verify-email (OTP validation, DB create, JWT issue)
+    Task 1.1.4: Set up Nodemailer with Gmail SMTP for OTP emails
+    Task 1.1.5: Write Zod schemas for register and login validation
+
+  User Story 1.2: As a registered user, I want to log in securely and access my personalized dashboard.
+    Task 1.2.1: Implement POST /api/auth/login (bcrypt compare, JWT generation)
+    Task 1.2.2: Implement AuthenticateMiddleware (JWT extraction, DB lookup, req.user attach)
+    Task 1.2.3: Implement authorize() middleware for role-based access control
+    Task 1.2.4: Implement GET /api/auth/profile
+
+  User Story 1.3: As a user, I want to reset my password if I forget it.
+    Task 1.3.1: Implement POST /api/profile/forgot-password (OTP to DB, email send)
+    Task 1.3.2: Implement POST /api/profile/verify-otp
+    Task 1.3.3: Implement POST /api/profile/reset-password (hash new password, clear OTP)
+    Task 1.3.4: Implement PUT /api/profile/name, change-password, change-email
+
+  SPRINT ASSIGNMENT: Sprint 1 (Weeks 1-2)
+  DEFINITION OF DONE: All auth endpoints tested via Postman; JWT authentication working on protected routes.
+
+=============
+EPIC 2: PCOS RISK PREDICTION (ML INTEGRATION)
+=============
+  User Story 2.1: As a patient, I want to enter my health data and receive a PCOS risk prediction.
+    Task 2.1.1: Design Prediction schema (all health input fields + ML output fields)
+    Task 2.1.2: Research and prepare training dataset for PCOS detection
+    Task 2.1.3: Train ML model (Python: scikit-learn, RandomForest or similar)
+    Task 2.1.4: Export trained model as .pkl file
+    Task 2.1.5: Write predict.py script (read stdin JSON, output prediction JSON to stdout)
+    Task 2.1.6: Implement POST /api/prediction/predict (spawn Python, capture stdout, save to DB)
+    Task 2.1.7: Implement riskLevel determination logic (probability thresholds)
+    Task 2.1.8: Implement GET /api/prediction/predictions (last 10 results for user)
+
+  SPRINT ASSIGNMENT: Sprint 2 (Weeks 3-4)
+  DEFINITION OF DONE: ML prediction endpoint returns valid riskLevel with confidence; results saved to DB.
+
+=============
+EPIC 3: MEAL PLAN GENERATION
+=============
+  User Story 3.1: As a patient, I want a personalized meal plan based on my PCOS risk level and dietary preference.
+    Task 3.1.1: Design Meal schema (name, mealType, riskCategory, isVeg, ingredients, recipe, etc.)
+    Task 3.1.2: Seed database with 30-50 meals across risk categories and meal types
+    Task 3.1.3: Design MealPlan and MealPlanDay schemas
+    Task 3.1.4: Implement MealPlanRuleEngine (risk mapping, diet filter logic)
+    Task 3.1.5: Implement POST /api/meal-plan/generate (7-day plan generation, unique meal selection)
+    Task 3.1.6: Implement GET /api/meal-plan/my-plan
+    Task 3.1.7: Implement POST /api/meal-plan/regenerate
+    Task 3.1.8: Implement GET /api/meal-plan/available-meals
+    Task 3.1.9: Implement PATCH /api/meal-plan/swap-meal
+
+  SPRINT ASSIGNMENT: Sprint 3 (Weeks 5-6)
+  DEFINITION OF DONE: 7-day plan generated correctly per risk level; swap feature functional.
+
+=============
+EPIC 4: APPOINTMENT BOOKING & MANAGEMENT
+=============
+  User Story 4.1: As a patient, I want to view available doctors and book an appointment with a report upload.
+    Task 4.1.1: Design Doctor schema (profile, availableDays, timeSlots, consultFee)
+    Task 4.1.2: Design Appointment schema (userId, doctorId, date, timeSlot, status, files, notes)
+    Task 4.1.3: Implement GET /api/public/doctors and GET /api/public/doctors/:id
+    Task 4.1.4: Implement GET /api/public/doctors/:id/available-slots (slot availability calculation)
+    Task 4.1.5: Implement upload middleware (multer: PDF/JPG/PNG, 5MB limit)
+    Task 4.1.6: Implement POST /api/user/appointments (validations: past slot, taken slot, file upload)
+    Task 4.1.7: Implement GET /api/user/appointments and DELETE /api/user/appointments/:id
+    Task 4.1.8: Set up appointment email utils (booking confirmation, cancellation)
+
+  User Story 4.2: As a doctor, I want to manage my appointments (confirm, add notes, complete).
+    Task 4.2.1: Implement GET /api/doctor/appointments (with status and date filters)
+    Task 4.2.2: Implement today/upcoming/past appointment endpoints
+    Task 4.2.3: Implement PUT /api/doctor/appointments/:id (status transitions with validation)
+    Task 4.2.4: Implement PUT /api/doctor/appointments/:id/notes
+    Task 4.2.5: Implement PUT /api/doctor/appointments/bulk-confirm
+    Task 4.2.6: Implement GET /api/doctor/appointments/:id/report (file stream)
+    Task 4.2.7: Set up confirmation, completion, rejection email utils
+    Task 4.2.8: Implement appointment expiry cron job (midnight, auto-cancel past PENDING)
+
+  SPRINT ASSIGNMENT: Sprint 3-4 (Weeks 5-8)
+  DEFINITION OF DONE: Booking flow end-to-end functional; status transitions enforced; emails sent correctly.
+
+=============
+EPIC 5: CYCLE TRACKING & PERIOD PREDICTION
+=============
+  User Story 5.1: As a patient, I want to log my daily symptoms and period data to track my cycle.
+    Task 5.1.1: Design DailyLog schema (date, isPeriod, flow, mood, energy, symptoms[], notes)
+    Task 5.1.2: Design CycleLog schema (startDate, endDate, periodLength)
+    Task 5.1.3: Implement POST /api/user/cycles/log (upsert with UTC normalization)
+    Task 5.1.4: Implement rebuildCycles logic (groupIntoCycles with 2-day grace gap)
+    Task 5.1.5: Implement GET /api/user/cycles/log/:date and /log/range
+    Task 5.1.6: Implement GET /api/user/cycles/history
+
+  User Story 5.2: As a patient, I want to see my predicted next period date and receive reminders.
+    Task 5.2.1: Implement GET /api/user/cycles/prediction (avg cycle calculation, confidence)
+    Task 5.2.2: Implement GET /api/user/cycles/insights (mood trends, top symptoms)
+    Task 5.2.3: Set up period reminder cron job (daily 8 AM, 3-day advance notice)
+    Task 5.2.4: Implement sendPeriodReminder email util
+
+  SPRINT ASSIGNMENT: Sprint 4 (Weeks 7-8)
+  DEFINITION OF DONE: Cycle rebuilt correctly after each log; prediction accuracy verified manually.
+
+=============
+EPIC 6: ADMIN DASHBOARD
+=============
+  User Story 6.1: As an admin, I want to manage doctors and view system statistics.
+    Task 6.1.1: Implement GET /api/admin/stats (parallel DB aggregation)
+    Task 6.1.2: Implement GET/POST/PUT/DELETE /api/admin/doctors
+    Task 6.1.3: Implement GET /api/admin/users
+    Task 6.1.4: Implement GET /api/admin/appointments + report download
+    Task 6.1.5: Implement GET/POST/PUT/DELETE /api/admin/content (educational content CRUD)
+    Task 6.1.6: Implement POST /api/auth/register-doctor (admin creates doctor auth account)
+
+  User Story 6.2: As an admin, I want a React dashboard to manage the system visually.
+    Task 6.2.1: Set up React + Vite project with Axios client (base URL, auth headers)
+    Task 6.2.2: Implement Login page with JWT storage (localStorage)
+    Task 6.2.3: Implement ProtectedRoute with role-based access
+    Task 6.2.4: Implement Admin Dashboard page (stats cards)
+    Task 6.2.5: Implement Users management page
+    Task 6.2.6: Implement Doctors CRUD page
+    Task 6.2.7: Implement Appointments monitoring page
+    Task 6.2.8: Implement Educational Content CRUD page
+
+  SPRINT ASSIGNMENT: Sprint 5 (Weeks 9-10)
+  DEFINITION OF DONE: Admin can add/edit/delete doctors; stats page shows correct counts.
+
+=============
+EPIC 7: DOCTOR DASHBOARD & PATIENT MANAGEMENT
+=============
+  User Story 7.1: As a doctor, I want a dashboard to view my stats and manage my profile and availability.
+    Task 7.1.1: Implement GET/PUT /api/doctor/profile
+    Task 7.1.2: Implement PUT /api/doctor/availability
+    Task 7.1.3: Implement GET /api/doctor/stats
+    Task 7.1.4: Implement GET /api/doctor/patients and /patients/:userId
+    Task 7.1.5: Implement GET /api/doctor/patients/:userId/appointments and /predictions
+    Task 7.1.6: Build Doctor Dashboard React page (stats, today's appointments)
+    Task 7.1.7: Build Doctor Appointments page (filter by status/date, confirm/complete actions)
+    Task 7.1.8: Build Doctor Patients page (list, detail view with prediction history)
+
+  SPRINT ASSIGNMENT: Sprint 5-6 (Weeks 9-12)
+  DEFINITION OF DONE: Doctor can manage full appointment lifecycle; patient prediction history accessible.
+
+=============
+EPIC 8: MOBILE APP (FLUTTER)
+=============
+  User Story 8.1: As a patient, I want a mobile app to access all features on my phone.
+    Task 8.1.1: Set up Flutter project with HTTP client and secure token storage
+    Task 8.1.2: Implement Auth screens (Register, Verify OTP, Login, Forgot Password)
+    Task 8.1.3: Implement PCOS Prediction form screen
+    Task 8.1.4: Implement Meal Plan display screen (weekly calendar, meal detail, swap)
+    Task 8.1.5: Implement Doctor List and Booking screens
+    Task 8.1.6: Implement Cycle Calendar with daily log input
+    Task 8.1.7: Implement Period Prediction screen
+    Task 8.1.8: Implement Profile/Settings screen (change name, password, email)
+    Task 8.1.9: Implement Educational Content browser
+
+  SPRINT ASSIGNMENT: Sprint 2-6 (parallel with backend development)
+  DEFINITION OF DONE: All core user flows functional on mobile; API integration tested on device.
+
+=============
+EPIC 9: TESTING, DOCUMENTATION & DEPLOYMENT
+=============
+  User Story 9.1: As a developer, I want comprehensive testing and documentation for the FYP submission.
+    Task 9.1.1: Write API documentation (all endpoints with request/response examples)
+    Task 9.1.2: Test all API endpoints with Postman collection
+    Task 9.1.3: Write unit tests for rule engine and service layer logic
+    Task 9.1.4: Perform integration testing for end-to-end flows (prediction -> meal plan)
+    Task 9.1.5: Set up environment variables documentation
+    Task 9.1.6: Deploy backend (Railway / Render / Heroku)
+    Task 9.1.7: Deploy React dashboard (Vercel / Netlify)
+    Task 9.1.8: Configure production database (PostgreSQL on Railway or Supabase)
+    Task 9.1.9: Run prisma migrate deploy on production
+
+  SPRINT ASSIGNMENT: Sprint 6 (Weeks 11-12)
+  DEFINITION OF DONE: Application deployed and accessible via public URL; documentation complete.
+
+================================================================================
+SECTION 5: SPRINT PLAN SUMMARY
+================================================================================
+
+SPRINT 1 (Weeks 1-2): Authentication Foundation
+  Goal    : Working auth system with JWT, OTP verification, role-based access
+  Epics   : Epic 1 (Auth & User Management)
+  Stories : 1.1, 1.2, 1.3
+  Velocity: ~15 story points
+
+SPRINT 2 (Weeks 3-4): ML Prediction + Mobile Auth
+  Goal    : PCOS prediction engine integrated with ML model; Flutter auth screens
+  Epics   : Epic 2 (ML Prediction), Epic 8 partial (Flutter auth)
+  Stories : 2.1, 8.1 (partial)
+  Velocity: ~18 story points
+
+SPRINT 3 (Weeks 5-6): Meal Plans + Appointment Booking
+  Goal    : Meal plan generation by risk level; doctor listing and booking flow
+  Epics   : Epic 3 (Meal Plans), Epic 4 partial (Booking)
+  Stories : 3.1, 4.1
+  Velocity: ~20 story points
+
+SPRINT 4 (Weeks 7-8): Cycle Tracking + Appointment Management
+  Goal    : Full cycle tracking with prediction; doctor appointment management
+  Epics   : Epic 4 partial (Doctor side), Epic 5 (Cycle Tracking)
+  Stories : 4.2, 5.1, 5.2
+  Velocity: ~18 story points
+
+SPRINT 5 (Weeks 9-10): Admin + Doctor Dashboards (React)
+  Goal    : Fully functional React dashboards for Admin and Doctor
+  Epics   : Epic 6 (Admin), Epic 7 partial (Doctor)
+  Stories : 6.1, 6.2, 7.1
+  Velocity: ~22 story points
+
+SPRINT 6 (Weeks 11-12): Integration, Polish & Deployment
+  Goal    : End-to-end integration; deployment; final testing; documentation
+  Epics   : Epic 8 completion (Flutter), Epic 9 (Testing & Deployment)
+  Stories : 8.1 (remaining), 9.1
+  Velocity: ~15 story points
+
+================================================================================
+SECTION 6: TRELLO BOARD SETUP
+================================================================================
+
+BOARD NAME: PCOS FYP - Development Board
+
+LISTS (COLUMNS):
+  1. BACKLOG              -- All pending user stories not yet in a sprint
+  2. SPRINT BACKLOG       -- Stories selected for the current sprint
+  3. IN PROGRESS          -- Tasks actively being worked on
+  4. IN REVIEW / TESTING  -- Tasks complete but awaiting testing or review
+  5. DONE                 -- Fully completed and tested tasks
+  6. BLOCKED              -- Tasks waiting on external dependency
+
+LABELS / TAGS:
+  - Backend          (blue)
+  - Frontend-React   (green)
+  - Flutter-Mobile   (orange)
+  - ML-Python        (purple)
+  - Database         (yellow)
+  - Email-Util       (pink)
+  - Bug              (red)
+  - Documentation    (gray)
+
+---
+
+SAMPLE CARDS PER EPIC:
+
+[EPIC 1: AUTH]
+  Card: "Implement User Registration with OTP"
+    Label: Backend
+    Checklist:
+      [ ] Design User Prisma schema
+      [ ] POST /api/auth/register endpoint
+      [ ] OTP generation + in-memory store
+      [ ] bcrypt password hashing
+      [ ] Nodemailer setup for OTP email
+      [ ] POST /api/auth/verify-email
+      [ ] JWT generation on verification
+    Due: Sprint 1 Week 1
+
+  Card: "Implement Login + JWT Authentication"
+    Label: Backend
+    Checklist:
+      [ ] POST /api/auth/login endpoint
+      [ ] AuthenticateMiddleware
+      [ ] authorize() role middleware
+    Due: Sprint 1 Week 2
+
+  Card: "Password Reset OTP Flow"
+    Label: Backend
+    Checklist:
+      [ ] POST /forgot-password
+      [ ] POST /verify-otp
+      [ ] POST /reset-password
+      [ ] sendPasswordChangedEmail
+    Due: Sprint 1 Week 2
+
+[EPIC 2: ML PREDICTION]
+  Card: "Train PCOS ML Model (Python)"
+    Label: ML-Python
+    Checklist:
+      [ ] Collect and clean PCOS dataset
+      [ ] Feature selection (FSH, LH, BMI, cycle data, etc.)
+      [ ] Train RandomForest classifier
+      [ ] Evaluate model (accuracy, precision, recall)
+      [ ] Export as .pkl file
+    Due: Sprint 2 Week 1
+
+  Card: "Integrate ML Model with Node.js API"
+    Label: Backend, ML-Python
+    Checklist:
+      [ ] Write predict.py stdin/stdout interface
+      [ ] POST /api/prediction/predict endpoint
+      [ ] Child process spawn logic
+      [ ] Risk level mapping from probability
+      [ ] Save prediction to PostgreSQL
+    Due: Sprint 2 Week 2
+
+[EPIC 3: MEAL PLAN]
+  Card: "Meal Plan Rule Engine + Generation"
+    Label: Backend
+    Checklist:
+      [ ] Seed 30+ meals in DB
+      [ ] mealPlanRuleEngine.js (risk->category, diet->filter)
+      [ ] generateMealPlan() service
+      [ ] POST /api/meal-plan/generate
+      [ ] Meal swap endpoint
+    Due: Sprint 3
+
+[EPIC 4: APPOINTMENTS]
+  Card: "Appointment Booking (User)"
+    Label: Backend
+    Checklist:
+      [ ] Multer upload middleware
+      [ ] Slot availability check
+      [ ] Past slot validation
+      [ ] POST /api/user/appointments
+      [ ] Booking confirmation email
+      [ ] Cancel with 2-hour deadline
+    Due: Sprint 3
+
+  Card: "Appointment Management (Doctor)"
+    Label: Backend
+    Checklist:
+      [ ] PENDING->CONFIRMED->COMPLETED flow
+      [ ] Notes endpoint
+      [ ] Bulk confirm
+      [ ] Status change emails
+      [ ] Midnight expiry cron job
+    Due: Sprint 4
+
+[EPIC 5: CYCLE TRACKING]
+  Card: "Cycle Logging + Rebuild Algorithm"
+    Label: Backend
+    Checklist:
+      [ ] DailyLog upsert
+      [ ] UTC midnight normalization
+      [ ] groupIntoCycles (2-day grace gap)
+      [ ] rebuildCycles on every log
+    Due: Sprint 4
+
+  Card: "Period Prediction + Reminder Cron"
+    Label: Backend
+    Checklist:
+      [ ] predictNextPeriod() -- avg from last 4 cycles
+      [ ] Confidence calculation
+      [ ] Daily 8 AM cron
+      [ ] sendPeriodReminder email
+    Due: Sprint 4
+
+[EPIC 6: ADMIN DASHBOARD]
+  Card: "Admin React Dashboard - Setup"
+    Label: Frontend-React
+    Checklist:
+      [ ] Vite + React project setup
+      [ ] Axios client with auth header
+      [ ] Login page + token storage
+      [ ] ProtectedRoute component
+      [ ] AdminLayout + Sidebar
+    Due: Sprint 5
+
+  Card: "Admin -- Doctor CRUD Pages"
+    Label: Frontend-React
+    Checklist:
+      [ ] Doctors list page
+      [ ] Add doctor form
+      [ ] Edit/delete actions
+    Due: Sprint 5
+
+[EPIC 7: DOCTOR DASHBOARD]
+  Card: "Doctor -- Appointments Page"
+    Label: Frontend-React
+    Checklist:
+      [ ] Appointment list with filters
+      [ ] Confirm/reject actions
+      [ ] Notes form
+      [ ] Mark complete
+      [ ] Report download
+    Due: Sprint 5-6
+
+[EPIC 8: FLUTTER MOBILE APP]
+  Card: "Flutter Auth Screens"
+    Label: Flutter-Mobile
+    Checklist:
+      [ ] Register screen
+      [ ] OTP verify screen
+      [ ] Login screen
+      [ ] Forgot password flow
+      [ ] Secure token storage
+    Due: Sprint 2
+
+  Card: "Flutter PCOS Prediction Screen"
+    Label: Flutter-Mobile
+    Checklist:
+      [ ] Multi-step health data form
+      [ ] API call to /predict
+      [ ] Result display (risk level, confidence)
+      [ ] CTA to generate meal plan
+    Due: Sprint 3
+
+  Card: "Flutter Cycle Calendar"
+    Label: Flutter-Mobile
+    Checklist:
+      [ ] Calendar widget with daily log
+      [ ] Daily log form (mood, flow, symptoms)
+      [ ] Period prediction display
+    Due: Sprint 4
+
+[EPIC 9: DEPLOYMENT & DOCS]
+  Card: "Deploy Backend to Railway/Render"
+    Label: Backend
+    Checklist:
+      [ ] Set environment variables
+      [ ] prisma migrate deploy
+      [ ] Verify all endpoints on production
+    Due: Sprint 6
+
+  Card: "Write FYP Documentation"
+    Label: Documentation
+    Checklist:
+      [ ] Postman collection export
+      [ ] Sequence diagrams (Mermaid)
+      [ ] Activity diagrams (Mermaid)
+      [ ] ER diagram from Prisma schema
+      [ ] WBS chart
+    Due: Sprint 6
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================
+
+NOTES FOR MERMAID CODE GENERATION:
+  This file contains all the information needed to generate:
+  - sequenceDiagram  : Use Section 1 flows (actors as participants, steps as messages)
+  - flowchart TD     : Use Section 2 activity flows (decision points = diamond {} shapes)
+  - classDiagram     : Use Section 3 objects and links for collaboration structure
+  - stateDiagram-v2  : Appointment status: PENDING->CONFIRMED->COMPLETED / CANCELLED
+  - mindmap          : WBS hierarchy from Section 4
+
+  Key Mermaid tips when generating:
+  - Sequence diagrams: participant names MUST be consistent across all arrows
+  - Activity = flowchart LR/TD with diamond shapes for decisions
+  - Collaboration = classDiagram where associations carry message labels
+  - State diagrams: use state X and X --> Y : label syntax
+  - For the appointment status machine, use stateDiagram-v2 with [*] as start and end

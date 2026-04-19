@@ -22,14 +22,20 @@ export const getPredictionById = async (id) => {
 export const createAppointment = async (data) => {
   return await prisma.appointment.create({
     data,
-    include: { doctor: true },
+    include: {
+      doctor: true,
+      prediction: true,
+    },
   });
 };
 
 export const getUserAppointments = async (userId) => {
   return await prisma.appointment.findMany({
     where: { userId },
-    include: { doctor: true },
+    include: {
+      doctor: true,
+      prediction: true,
+    },
     orderBy: { date: "asc" },
   });
 };
@@ -37,7 +43,10 @@ export const getUserAppointments = async (userId) => {
 export const getUserAppointmentById = async (id, userId) => {
   return await prisma.appointment.findFirst({
     where: { id, userId },
-    include: { doctor: true },
+    include: {
+      doctor: true,
+      prediction: true,
+    },
   });
 };
 

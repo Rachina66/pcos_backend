@@ -58,6 +58,8 @@ model Prediction {
   riskLevel   String
   confidence  Float
 
+  appointments     Appointment[]
+
   createdAt DateTime @default(now())
 
   @@index([userId])
@@ -101,6 +103,8 @@ model Appointment {
   consultationNotes String?
   prescription      String?
   diagnosis         String?
+  predictionId      String?
+  prediction        Prediction? @relation(fields: [predictionId], references: [id])
   
   createdAt  DateTime          @default(now())
   updatedAt  DateTime          @updatedAt

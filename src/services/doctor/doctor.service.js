@@ -232,7 +232,6 @@ export const bulkConfirmAppointments = async (doctorId, appointmentIds) => {
   });
 };
 
-// ═══ PATIENT MANAGEMENT ═══
 export const getDoctorPatients = async (doctorId) => {
   const appointments = await prisma.appointment.findMany({
     where: { doctorId },
@@ -246,15 +245,24 @@ export const getDoctorPatients = async (doctorId) => {
     orderBy: { createdAt: "desc" },
   });
 
-  // Get appointment count for each patient
   const patients = await Promise.all(
     appointments.map(async (apt) => {
+      // ── Only count COMPLETED appointments ──
       const appointmentCount = await prisma.appointment.count({
-        where: { doctorId, userId: apt.userId },
+        where: {
+          doctorId,
+          userId: apt.userId,
+          status: "COMPLETED",
+        },
       });
 
+      // ── Last COMPLETED appointment only ──
       const lastAppointment = await prisma.appointment.findFirst({
-        where: { doctorId, userId: apt.userId },
+        where: {
+          doctorId,
+          userId: apt.userId,
+          status: "COMPLETED",
+        },
         orderBy: { date: "desc" },
       });
 
@@ -278,11 +286,21 @@ export const getPatientById = async (doctorId, userId) => {
   if (!user) return null;
 
   const appointmentCount = await prisma.appointment.count({
-    where: { doctorId, userId },
+    where: {
+      doctorId,
+      userId,
+      status: "COMPLETED",
+    },
   });
 
+  // In doctor.service.js — getPatientById()
   const lastAppointment = await prisma.appointment.findFirst({
-    where: { doctorId, userId },
+    where: {
+      doctorId,
+      userId,
+      status: "COMPLETED",
+      date: { lt: new Date() },
+    },
     orderBy: { date: "desc" },
   });
 

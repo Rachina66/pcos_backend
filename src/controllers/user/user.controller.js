@@ -1,5 +1,6 @@
 import * as userService from "../../services/user/user.service.js";
 import * as doctorService from "../../services/public/public.service.js";
+import { createNotification } from "../../services/notification/notification.service.js";
 import {
   successResponse,
   errorResponse,
@@ -13,8 +14,9 @@ import {
   isSlotInPast,
   isCancellationTooLate,
 } from "../../utils/appointment.utils.js";
+import { io } from "../../../server.js";
 
-//PREDICTIONS
+// ═══ PREDICTIONS ═══
 export const createPrediction = async (req, res) => {
   try {
     const { data } = req.body;
@@ -24,9 +26,26 @@ export const createPrediction = async (req, res) => {
       return errorResponse(res, "Prediction data is required", 400);
     }
 
-    const prediction = await userService.createPrediction({
+    const prediction = await userService.createPrediction({ userId, ...data });
+
+    // ── Socket emit ──
+    io.to("admin").emit("prediction:new", {
+      predictionId: prediction.id,
       userId,
-      ...data,
+      riskLevel: prediction.riskLevel,
+    });
+
+    // ── Notification ──
+    await createNotification({
+      recipientRole: "ADMIN",
+      type: "PREDICTION_NEW",
+      title: "New PCOS Prediction",
+      body: `A user submitted a new prediction. Risk level: ${prediction.riskLevel}`,
+      data: {
+        predictionId: prediction.id,
+        userId,
+        riskLevel: prediction.riskLevel,
+      },
     });
 
     return successResponse(
@@ -63,7 +82,7 @@ export const getMyPredictions = async (req, res) => {
   }
 };
 
-//APPOINTMENTS
+// ═══ APPOINTMENTS ═══
 export const bookAppointment = async (req, res) => {
   try {
     const { doctorId, date, timeSlot, reason, predictionId } = req.body;
@@ -77,18 +96,15 @@ export const bookAppointment = async (req, res) => {
       );
     }
 
-    //Check doctor exists
     const doctor = await doctorService.getDoctorById(doctorId);
     if (!doctor) {
       return notFoundResponse(res, "Doctor not found");
     }
 
-    //Check slot is not in the past
     if (isSlotInPast(date, timeSlot)) {
       return errorResponse(res, "This time slot has already passed", 400);
     }
 
-    //Check slot is not already booked
     const slotTaken = await userService.isSlotTaken(doctorId, date, timeSlot);
     if (slotTaken) {
       return errorResponse(
@@ -98,7 +114,6 @@ export const bookAppointment = async (req, res) => {
       );
     }
 
-    // Validate predictionId belongs to this user if provided
     if (predictionId) {
       const prediction = await userService.getPredictionById(predictionId);
       if (!prediction || prediction.userId !== userId) {
@@ -106,7 +121,6 @@ export const bookAppointment = async (req, res) => {
       }
     }
 
-    //Get report file if uploaded
     const reportFile = req.file ? req.file.path.replace(/\\/g, "/") : null;
 
     const appointment = await userService.createAppointment({
@@ -118,12 +132,59 @@ export const bookAppointment = async (req, res) => {
       reportFile,
       predictionId: predictionId || null,
     });
+
     sendBookingConfirmation(req.user.email, req.user.name, {
       doctorName: doctor.name,
       date: new Date(date).toDateString(),
       timeSlot,
       hospital: doctor.hospital,
     });
+
+    const appointmentPayload = {
+      appointmentId: appointment.id,
+      patientName: req.user.name,
+      date: new Date(date).toDateString(),
+      timeSlot,
+    };
+
+    // ── Socket emits ──
+    console.log("[Socket] rooms available:", [
+      ...io.sockets.adapter.rooms.keys(),
+    ]);
+    console.log("[Socket] emitting to:", `doctor:${doctorId}`);
+    console.log("[Socket] doctorId from request:", doctorId);
+
+    io.to(`doctor:${doctorId}`).emit("appointment:new", appointmentPayload);
+    io.to("admin").emit("appointment:new", appointmentPayload);
+    // ── Notifications ──
+    await createNotification({
+      doctorId,
+      recipientRole: "DOCTOR",
+      type: "APPOINTMENT_NEW",
+      title: "New Appointment Booked",
+      body: `${req.user.name} booked an appointment on ${new Date(date).toDateString()} at ${timeSlot}`,
+      data: {
+        appointmentId: appointment.id,
+        patientName: req.user.name,
+        date: new Date(date).toDateString(),
+        timeSlot,
+      },
+    });
+
+    await createNotification({
+      recipientRole: "ADMIN",
+      type: "APPOINTMENT_NEW",
+      title: "New Appointment",
+      body: `${req.user.name} booked with Dr. ${doctor.name} on ${new Date(date).toDateString()} at ${timeSlot}`,
+      data: {
+        appointmentId: appointment.id,
+        patientName: req.user.name,
+        doctorName: doctor.name,
+        date: new Date(date).toDateString(),
+        timeSlot,
+      },
+    });
+
     return successResponse(
       res,
       appointment,
@@ -153,19 +214,17 @@ export const getMyAppointments = async (req, res) => {
   }
 };
 
-//CANCEL APPOINTMENT
+// ═══ CANCEL APPOINTMENT ═══
 export const cancelAppointment = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
 
-    //Check appointment exists and belongs to user
     const appointment = await userService.getUserAppointmentById(id, userId);
     if (!appointment) {
       return notFoundResponse(res, "Appointment not found");
     }
 
-    //Can only cancel PENDING or CONFIRMED
     if (!["PENDING", "CONFIRMED"].includes(appointment.status)) {
       return errorResponse(
         res,
@@ -174,7 +233,6 @@ export const cancelAppointment = async (req, res) => {
       );
     }
 
-    //Check cancellation deadline
     if (isCancellationTooLate(appointment.date, appointment.timeSlot)) {
       return errorResponse(
         res,
@@ -184,6 +242,7 @@ export const cancelAppointment = async (req, res) => {
     }
 
     const cancelled = await userService.cancelAppointment(id);
+
     sendCancellationToDoctor(
       appointment.doctor.email,
       appointment.doctor.name,
@@ -193,6 +252,47 @@ export const cancelAppointment = async (req, res) => {
         timeSlot: appointment.timeSlot,
       },
     );
+
+    // ── Socket emits ──
+    io.to(`doctor:${appointment.doctorId}`).emit(
+      "appointment:cancelled_by_user",
+      {
+        appointmentId: id,
+        patientName: req.user.name,
+        date: appointment.date.toDateString(),
+        timeSlot: appointment.timeSlot,
+      },
+    );
+    io.to("admin").emit("appointment:cancelled_by_user", { appointmentId: id });
+
+    // ── Notifications ──
+    await createNotification({
+      doctorId: appointment.doctorId,
+      recipientRole: "DOCTOR",
+      type: "APPOINTMENT_CANCELLED",
+      title: "Appointment Cancelled",
+      body: `${req.user.name} cancelled their appointment on ${appointment.date.toDateString()} at ${appointment.timeSlot}`,
+      data: {
+        appointmentId: id,
+        patientName: req.user.name,
+        date: appointment.date.toDateString(),
+        timeSlot: appointment.timeSlot,
+      },
+    });
+
+    await createNotification({
+      recipientRole: "ADMIN",
+      type: "APPOINTMENT_CANCELLED",
+      title: "Appointment Cancelled",
+      body: `${req.user.name} cancelled with Dr. ${appointment.doctor.name} on ${appointment.date.toDateString()} at ${appointment.timeSlot}`,
+      data: {
+        appointmentId: id,
+        patientName: req.user.name,
+        doctorName: appointment.doctor.name,
+        date: appointment.date.toDateString(),
+        timeSlot: appointment.timeSlot,
+      },
+    });
 
     return successResponse(
       res,

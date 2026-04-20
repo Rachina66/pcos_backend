@@ -20,6 +20,7 @@ model User {
   cycleLogs    CycleLog[]
   dailyLogs    DailyLog[]       // replaces symptomLogs
   mealPlans    MealPlan[]
+  notifications Notification[]  
 }
 
 enum Role {
@@ -84,6 +85,7 @@ model Doctor {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   appointments   Appointment[]
+  notifications Notification[]  
 }
 
 model Appointment {
@@ -251,3 +253,40 @@ model MealPlanDay {
   @@index([mealPlanId])
 }
 
+model Notification {
+  id            String           @id @default(uuid())
+  
+  userId        String?          // null if recipient is doctor or admin
+  user          User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  doctorId      String?          // null if recipient is user or admin
+  doctor        Doctor?          @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  recipientRole RecipientRole    // who this is for
+  type          NotificationType
+  title         String
+  body          String
+  data          Json             @default("{}")
+  read          Boolean          @default(false)
+  createdAt     DateTime         @default(now())
+
+  @@index([userId, read])
+  @@index([doctorId, read])
+}
+
+enum RecipientRole {
+  USER
+  DOCTOR
+  ADMIN
+}
+
+enum NotificationType {
+  APPOINTMENT_NEW
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_COMPLETED
+  APPOINTMENT_NOTES_ADDED
+  PREDICTION_NEW
+  USER_REGISTERED
+  DOCTOR_AVAILABILITY_UPDATED
+}

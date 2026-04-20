@@ -1,4 +1,5 @@
 import * as doctorService from "../../services/doctor/doctor.service.js";
+import { createNotification } from "../../services/notification/notification.service.js";
 import {
   successResponse,
   errorResponse,
@@ -10,6 +11,8 @@ import {
   sendAppointmentRejected,
   sendAppointmentCompleted,
 } from "../../utils/email.utils.js";
+import { io } from "../../../server.js";
+
 // ═══ HELPER — get doctor profile or return error ═══
 const getDoctorProfileOrError = async (res, email) => {
   const doctorProfile = await doctorService.getDoctorProfileByEmail(email);
@@ -94,6 +97,12 @@ export const updateMyAvailability = async (req, res) => {
       req.user.email,
       updateData,
     );
+
+    io.emit("doctor:availability_updated", {
+      doctorId: updated.id,
+      availableSlots: updated.timeSlots,
+    });
+
     return successResponse(res, updated, "Availability updated successfully");
   } catch (error) {
     return errorResponse(
@@ -217,12 +226,11 @@ export const getPastAppointments = async (req, res) => {
   }
 };
 
-// ═══ UPDATE APPOINTMENT STATUS — with proper flow enforcement ═══
+// ═══ UPDATE APPOINTMENT STATUS ═══
 export const updateAppointmentStatus = async (req, res) => {
   try {
     const { status, notes } = req.body;
 
-    // Only allow these statuses from doctor side
     const allowedStatuses = ["CONFIRMED", "CANCELLED", "COMPLETED"];
     if (!allowedStatuses.includes(status)) {
       return errorResponse(
@@ -238,7 +246,6 @@ export const updateAppointmentStatus = async (req, res) => {
     const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
     if (!doctorProfile) return;
 
-    // Make sure doctor owns this appointment
     if (appointment.doctorId !== doctorProfile.id) {
       return errorResponse(
         res,
@@ -247,9 +254,6 @@ export const updateAppointmentStatus = async (req, res) => {
       );
     }
 
-    // ═══ STATUS FLOW RULES ═══
-
-    // Can only CONFIRM a PENDING appointment
     if (status === "CONFIRMED" && appointment.status !== "PENDING") {
       return errorResponse(
         res,
@@ -258,7 +262,6 @@ export const updateAppointmentStatus = async (req, res) => {
       );
     }
 
-    // Can only COMPLETE a CONFIRMED appointment
     if (status === "COMPLETED" && appointment.status !== "CONFIRMED") {
       return errorResponse(
         res,
@@ -267,7 +270,6 @@ export const updateAppointmentStatus = async (req, res) => {
       );
     }
 
-    // Can only CANCEL a PENDING or CONFIRMED appointment
     if (
       status === "CANCELLED" &&
       !["PENDING", "CONFIRMED"].includes(appointment.status)
@@ -279,7 +281,6 @@ export const updateAppointmentStatus = async (req, res) => {
       );
     }
 
-    // If completing — require notes
     if (status === "COMPLETED" && !notes) {
       return errorResponse(
         res,
@@ -293,6 +294,57 @@ export const updateAppointmentStatus = async (req, res) => {
       status,
       notes,
     );
+
+    // ── Socket emits ──
+    io.to(`user:${appointment.userId}`).emit("appointment:status_updated", {
+      appointmentId: req.params.id,
+      status,
+      doctorName: doctorProfile.name,
+      date: appointment.date.toDateString(),
+      timeSlot: appointment.timeSlot,
+      notes: notes || null,
+    });
+    io.to("admin").emit("appointment:status_updated", {
+      appointmentId: req.params.id,
+      status,
+    });
+
+    // ── Notifications ──
+    const statusLabels = {
+      CONFIRMED: "Confirmed",
+      CANCELLED: "Cancelled",
+      COMPLETED: "Completed",
+    };
+
+    await createNotification({
+      userId: appointment.userId,
+      recipientRole: "USER",
+      type: `APPOINTMENT_${status}`,
+      title: `Appointment ${statusLabels[status]}`,
+      body: `Dr. ${doctorProfile.name} ${status.toLowerCase()} your appointment on ${appointment.date.toDateString()} at ${appointment.timeSlot}${notes ? `. Note: ${notes}` : ""}`,
+      data: {
+        appointmentId: req.params.id,
+        status,
+        doctorName: doctorProfile.name,
+        date: appointment.date.toDateString(),
+        timeSlot: appointment.timeSlot,
+      },
+    });
+
+    await createNotification({
+      recipientRole: "ADMIN",
+      type: `APPOINTMENT_${status}`,
+      title: `Appointment ${statusLabels[status]}`,
+      body: `Dr. ${doctorProfile.name} ${status.toLowerCase()} appointment with ${appointment.user.name} on ${appointment.date.toDateString()}`,
+      data: {
+        appointmentId: req.params.id,
+        status,
+        doctorName: doctorProfile.name,
+        patientName: appointment.user.name,
+      },
+    });
+
+    // ── Emails ──
     if (status === "CONFIRMED") {
       sendAppointmentConfirmed(appointment.user.email, appointment.user.name, {
         doctorName: doctorProfile.name,
@@ -322,6 +374,7 @@ export const updateAppointmentStatus = async (req, res) => {
         timeSlot: appointment.timeSlot,
       });
     }
+
     return successResponse(
       res,
       updated,
@@ -337,7 +390,7 @@ export const updateAppointmentStatus = async (req, res) => {
   }
 };
 
-//Add Consultantaion Notes
+// ═══ ADD CONSULTATION NOTES ═══
 export const addConsultationNotes = async (req, res) => {
   try {
     const { consultationNotes, prescription, diagnosis } = req.body;
@@ -364,7 +417,6 @@ export const addConsultationNotes = async (req, res) => {
       );
     }
 
-    // Can only add notes to CONFIRMED or COMPLETED appointments
     if (!["CONFIRMED", "COMPLETED"].includes(appointment.status)) {
       return errorResponse(
         res,
@@ -377,6 +429,30 @@ export const addConsultationNotes = async (req, res) => {
       consultationNotes,
       prescription,
       diagnosis,
+    });
+
+    // ── Socket emit ──
+    io.to(`user:${appointment.userId}`).emit("appointment:notes_added", {
+      appointmentId: req.params.id,
+      consultationNotes: consultationNotes || null,
+      prescription: prescription || null,
+      diagnosis: diagnosis || null,
+    });
+
+    // ── Notification ──
+    await createNotification({
+      userId: appointment.userId,
+      recipientRole: "USER",
+      type: "APPOINTMENT_NOTES_ADDED",
+      title: "Consultation Notes Added",
+      body: `Dr. ${doctorProfile.name} added consultation notes to your appointment on ${appointment.date.toDateString()}`,
+      data: {
+        appointmentId: req.params.id,
+        doctorName: doctorProfile.name,
+        date: appointment.date.toDateString(),
+        hasPrescription: !!prescription,
+        hasDiagnosis: !!diagnosis,
+      },
     });
 
     return successResponse(
@@ -394,7 +470,7 @@ export const addConsultationNotes = async (req, res) => {
   }
 };
 
-//BULK CONFIRM
+// ═══ BULK CONFIRM ═══
 export const bulkConfirmAppointments = async (req, res) => {
   try {
     const { appointmentIds } = req.body;
@@ -406,9 +482,61 @@ export const bulkConfirmAppointments = async (req, res) => {
     const doctorProfile = await getDoctorProfileOrError(res, req.user.email);
     if (!doctorProfile) return;
 
+    const appointmentsToConfirm = await Promise.all(
+      appointmentIds.map((id) => doctorService.getAppointmentById(id)),
+    );
+
     const result = await doctorService.bulkConfirmAppointments(
       doctorProfile.id,
       appointmentIds,
+    );
+
+    // ── Socket emits ──
+    io.to("admin").emit("appointment:bulk_confirmed", {
+      confirmedCount: result.count,
+      appointmentIds,
+    });
+
+    appointmentsToConfirm.forEach((apt) => {
+      if (!apt) return;
+      io.to(`user:${apt.userId}`).emit("appointment:status_updated", {
+        appointmentId: apt.id,
+        status: "CONFIRMED",
+        doctorName: doctorProfile.name,
+        date: apt.date.toDateString(),
+        timeSlot: apt.timeSlot,
+      });
+    });
+
+    // ── Notifications ──
+    await createNotification({
+      recipientRole: "ADMIN",
+      type: "APPOINTMENT_CONFIRMED",
+      title: "Bulk Appointments Confirmed",
+      body: `Dr. ${doctorProfile.name} confirmed ${result.count} appointment${result.count > 1 ? "s" : ""} at once`,
+      data: {
+        confirmedCount: result.count,
+        appointmentIds,
+        doctorName: doctorProfile.name,
+      },
+    });
+
+    await Promise.all(
+      appointmentsToConfirm.filter(Boolean).map((apt) =>
+        createNotification({
+          userId: apt.userId,
+          recipientRole: "USER",
+          type: "APPOINTMENT_CONFIRMED",
+          title: "Appointment Confirmed",
+          body: `Dr. ${doctorProfile.name} confirmed your appointment on ${apt.date.toDateString()} at ${apt.timeSlot}`,
+          data: {
+            appointmentId: apt.id,
+            doctorName: doctorProfile.name,
+            date: apt.date.toDateString(),
+            timeSlot: apt.timeSlot,
+          },
+        }),
+      ),
     );
 
     return successResponse(
@@ -426,7 +554,7 @@ export const bulkConfirmAppointments = async (req, res) => {
   }
 };
 
-//DOWNLOAD PATIENT REPORT
+// ═══ DOWNLOAD PATIENT REPORT ═══
 export const downloadPatientReport = async (req, res) => {
   try {
     const appointment = await doctorService.getAppointmentById(req.params.id);
@@ -454,7 +582,7 @@ export const downloadPatientReport = async (req, res) => {
   }
 };
 
-//PATIENT MANAGEMENT
+// ═══ PATIENT MANAGEMENT ═══
 export const getMyPatients = async (req, res) => {
   try {
     const doctorProfile = await getDoctorProfileOrError(res, req.user.email);

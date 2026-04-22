@@ -27,7 +27,12 @@ export const verifyEmail = async (req, res) => {
   try {
     const { email, otp } = req.body;
     const result = await authService.verifyEmail(email, otp); // ← get result
-    io.to("admin").emit("user:registered", { userId: result.user.id, name: result.user.name, email: result.user.email, role: result.user.role });
+    io.to("admin").emit("user:registered", {
+      userId: result.user.id,
+      name: result.user.name,
+      email: result.user.email,
+      role: result.user.role,
+    });
     return successResponse(res, result, "Email verified successfully");
   } catch (error) {
     return errorResponse(res, error.message, 400);
